@@ -1,0 +1,35 @@
+# Build output of the widget
+widget/build/
+*.app/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Never publish personal data: indexes, transcripts, reports, exports, backups
+*.jsonl
+*.csv
+index.json
+categories.json
+predictor.json
+config.json
+live/
+*.task-eta-backup-*
+benchmark/
+report/
+backup/
+
+# macOS
+.DS_Store
+
+# Claude Code's own per-project files (approved commands can hold local paths)
+.claude/
+CLAUDE.local.md
+
+# Exports and widget debug output (they can hold prompts and session names)
+*.json
+state.txt
+click.txt
+panel.png
+popover.png
