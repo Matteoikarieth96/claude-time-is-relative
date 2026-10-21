@@ -95,6 +95,27 @@ KIND_HELP = {"quick": "1-3 tool calls, e.g. write one file, or write it and run 
 # under BRIEF_AGENT_S. Out of sample, with the right one picked, within 2x went from 54% to 73% on
 # those tasks (round 7). Both lines are the kind "agents" for the parser and the widget.
 BRIEF_AGENT_S = 600
+# A call that writes a big file or document is long model time that a count of calls misses (the
+# author's tasks of one kind took 3 to 8 times longer when their calls averaged 40 s or more). So
+# for the kinds, a Write or Edit of BIG_WRITE_CHARS or more new characters (about 150 lines)
+# counts as BIG_WRITE_UNITS tool calls, and the block tells Claude to count it the same way.
+BIG_WRITE_CHARS = 6000
+BIG_WRITE_UNITS = 3
+WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+
+
+def written_chars(inp):
+    """New characters a Write/Edit-like call writes (its content, new_string or new_source)."""
+    if not isinstance(inp, dict):
+        return 0
+    total = 0
+    for key in ("content", "new_string", "new_source"):
+        if isinstance(inp.get(key), str):
+            total += len(inp[key])
+    for edit in inp.get("edits") if isinstance(inp.get("edits"), list) else []:
+        if isinstance(edit, dict) and isinstance(edit.get("new_string"), str):
+            total += len(edit["new_string"])
+    return total
 KIND_ORDER = {"text": 0, "quick": 1, "medium": 2, "long": 3, "agents": 4}
 # The kind as written at the end of the line, in English or in the Italian of older versions
 # ("veloce", "medio", "lungo", "con sub agent"). Looked for only after the estimate itself,
@@ -187,7 +208,7 @@ TOOL_USE_ID = re.compile(r"<tool-use-id>(toolu_\w{1,80})</tool-use-id>")
 NOTE_TASK_ID = re.compile(r"<task-id>([\w-]{1,80})</task-id>")
 AGENT_MSG_FROM = re.compile(r'<agent-message from="([\w-]{1,80})"')  # a background agent handing back
 LAUNCH_ID = re.compile(r"(?:agentId|Task ID|with ID)[ \t]*:?[ \t]*([\w-]{6,80})")
-PARSER_VERSION = 5  # bump when parse_transcript changes what it measures: update() then re-parses everything
+PARSER_VERSION = 6  # bump when parse_transcript changes what it measures: update() then re-parses everything
 EFFORTS = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
 # What a model name may look like before it is stored or shown ("opus-5-5", "claude-sonnet-5-5",
 # "us.anthropic.claude-opus-5-5-v1:0", "anthropic/claude-opus-5.5"): lowercase, at most 48 characters
@@ -551,6 +572,7 @@ def new_task(rec, ts, text):
         "tools": 0,
         "proto": 0,           # tool calls of the estimate protocol itself (elapsed, eta)
         "proto_at": None,     # seconds from the prompt to the last `elapsed` call (its final reply follows)
+        "big_writes": 0,      # Write/Edit calls with BIG_WRITE_CHARS or more of new text
         "agents": 0,
         "asks": {},
         "estimate_min": None,
@@ -634,6 +656,7 @@ def finish(cur, path):
         "tools": cur["tools"],
         "proto": cur["proto"],
         "proto_at": cur["proto_at"],
+        "big_writes": cur["big_writes"],
         "agents": cur["agents"],
         "agent_ids": cur["agent_ids"],
         "workflow_runs": cur["workflow_runs"],
@@ -783,6 +806,8 @@ def parse_transcript(path):
                         target = str(inp.get("file_path") or "")
                         if name in ("Edit", "Write", "NotebookEdit") and "." in os.path.basename(target):
                             cur["edit_exts"][target.rsplit(".", 1)[-1].lower()[:8]] += 1
+                        if name in WRITE_TOOLS and written_chars(inp) >= BIG_WRITE_CHARS:
+                            cur["big_writes"] += 1
                         if name in WAKE_TOOLS:
                             cur["agents"] += 1
                             cur["pending_agents"].add(tid)
@@ -1057,8 +1082,8 @@ def clean_task(task):
     task["interrupted"] = bool(task.get("interrupted"))
     task["model"] = valid_model(task.get("model"))
     task["effort"] = valid_effort(task.get("effort"))
-    for k in ("proto", "segments"):
-        if not isinstance(task.get(k), int):
+    for k in ("proto", "segments", "big_writes"):
+        if not isinstance(task.get(k), int) or isinstance(task.get(k), bool) or task[k] < 0:
             task[k] = 0
     for k in ("end_ts", "wait_s", "active_s", "proto_at"):
         if k in task and (not isinstance(task[k], NUM) or isinstance(task[k], bool) or not math.isfinite(task[k])):
@@ -1338,6 +1363,12 @@ def work_tools(task):
     return task["tools"] - (task.get("proto") or 0)
 
 
+def work_units(task):
+    """Tool calls as the kinds count them: a big write counts as BIG_WRITE_UNITS calls."""
+    n = work_tools(task)
+    return n + (BIG_WRITE_UNITS - 1) * (task.get("big_writes") or 0) if n > 0 else n
+
+
 def agents_brief(task):
     """For a task with subagents: True if its subagents' median run was under BRIEF_AGENT_S,
     False if not, None when their runs were not recorded."""
@@ -1350,7 +1381,7 @@ def task_kind(task):
     """What the task turned out to be: text, quick, medium, long or agents (see KINDS)."""
     if task.get("agents"):
         return "agents"
-    n = work_tools(task)
+    n = work_units(task)
     if n <= 0:
         return "text"
     for kind in ("quick", "medium"):
@@ -2093,8 +2124,9 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
         "user excluded. Now: %s %s (from %s). Model seconds per call for %s: %s."
         % (model, effort, model, effort, source, model, ladder(lat, model)),
         "- The time depends mostly on how much work you plan. Count only the tool calls you are sure to "
-        "need (each Read, Write, Edit, Bash, search or fetch is one; the closing `elapsed` call is not "
-        "counted): plans tend to count more steps than the work takes, so when torn between two kinds, "
+        "need (each Read, Write, Edit, Bash, search or fetch is one, a file or document of more than "
+        "~150 lines you write counts as 3, the closing `elapsed` call is not counted): plans tend to "
+        "count more steps than the work takes, so when torn between two kinds, "
         "pick the smaller. Estimate for this request by kind of work, with how often it was right on "
         "your last tasks that really were that kind (out of sample: it holds only if you pick the right kind):",
     ]

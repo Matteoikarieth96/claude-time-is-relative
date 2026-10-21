@@ -151,5 +151,42 @@ class BriefSubagents(unittest.TestCase):
                                task_eta.pct(all_agents, 0.5))
 
 
+class BigWrites(unittest.TestCase):
+    """A Write or Edit of about 150 lines or more counts as 3 tool calls for the kinds."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.projects = os.path.join(self.tmp.name, ".claude", "projects")
+
+    def tearDown(self):
+        remove_tmp(self.tmp)
+
+    def test_written_chars(self):
+        self.assertEqual(task_eta.written_chars({"content": "abc"}), 3)
+        self.assertEqual(task_eta.written_chars({"new_string": "ab", "old_string": "zzzz"}), 2)
+        self.assertEqual(task_eta.written_chars({"edits": [{"new_string": "ab"}, {"new_string": "cde"}, "x", {}]}), 5)
+        for odd in (None, "text", ["content"], {"content": 5}, {"edits": "abc"}):
+            self.assertEqual(task_eta.written_chars(odd), 0, odd)
+
+    def test_a_big_write_moves_a_task_up_a_kind(self):
+        t = Transcript()
+        t.prompt(T0, "Build the dashboard page")
+        big = "x" * task_eta.BIG_WRITE_CHARS
+        t.tool(T0 + 5, "Write", {"file_path": "/work/acme/app.html", "content": big}, T0 + 90)
+        t.tool(T0 + 95, "Write", {"file_path": "/work/acme/test.js", "content": "small"}, T0 + 100)
+        t.tool(T0 + 105, "Bash", {"command": "node test.js"}, T0 + 110)
+        t.say(T0 + 115, "Done.", end=True)
+        t.stop(T0 + 116)
+        task = task_eta.parse_transcript(t.write(self.projects))[0]
+        self.assertEqual((task["big_writes"], task_eta.work_tools(task), task_eta.work_units(task)), (1, 3, 5))
+        self.assertEqual(task_eta.task_kind(task), "medium")  # 3 calls alone would be "quick"
+
+    def test_bad_stored_counts_become_zero(self):
+        for bad in ("2", True, -1, 1.5):
+            task = fake_task("opus-5-5", "high", T0)
+            task.update(key="k", start="x", big_writes=bad)
+            self.assertEqual(task_eta.clean_task(task)["big_writes"], 0, bad)
+
+
 if __name__ == "__main__":
     unittest.main()
