@@ -10,6 +10,7 @@ permissions:
 jobs:
   test-linux:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
@@ -22,6 +23,7 @@ jobs:
 
   test-macos:
     runs-on: macos-14
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
         with:
@@ -30,5 +32,7 @@ jobs:
         run: /usr/bin/python3 -m unittest discover -s tests -v
       - name: Build the widget from source
         run: ./widget/build.sh
+      - name: Widget self-test (parsers of files written by others)
+        run: ./widget/build/TaskETA.app/Contents/MacOS/TaskETA --selftest
       - name: Render the demo panel
         run: ./widget/build/TaskETA.app/Contents/MacOS/TaskETA --snapshot "$RUNNER_TEMP/panel.png" --demo

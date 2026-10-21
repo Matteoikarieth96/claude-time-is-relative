@@ -14,6 +14,8 @@ task_eta = importlib.import_module("task_eta")
 
 class Lines(unittest.TestCase):
     def test_estimate_line(self):
+        self.assertEqual(task_eta.parse_estimate("⏱ Estimated time with opus-5-5 high: ~3 min (likely 1 to 8 min, medium)"),
+                         (3.0, None))
         self.assertEqual(task_eta.parse_estimate("⏱ Estimated time with opus-5-5 high: ~3 min (likely 1 to 8 min)"),
                          (3.0, None))
         self.assertEqual(task_eta.parse_estimate("⏱ Estimated time with sonnet-5-5 medium: ~40 s")[0], 0.7)
@@ -24,6 +26,29 @@ class Lines(unittest.TestCase):
         self.assertEqual(task_eta.parse_estimate("⏱ Tempo richiesto con opus-5-5 high: ~10 min")[0], 10.0)
         self.assertEqual(task_eta.parse_estimate("⏱ Stima: ~1,5 h")[0], 90.0)
         self.assertEqual(task_eta.parse_range("⏱ Tempo richiesto: ~10 min (probabile tra 4 e 24 min)"), [240, 1440])
+        line = "⏱ Tempo richiesto con opus-5-5 high: ~10 min (probabile tra 4 e 24 min, lungo)"
+        self.assertEqual(task_eta.parse_kind(line), "long")
+        self.assertEqual(task_eta.parse_kind("⏱ Tempo richiesto con x y: ~3 min (con sub agent)"), "agents")
+        self.assertEqual(task_eta.declared_kind({"kind_declared": "veloce"}), "quick")
+
+    def test_kind_in_the_line(self):
+        line = "⏱ Estimated time with sonnet-5-5 medium: ~40 s (likely 20 s to 2 min, quick)"
+        self.assertEqual(task_eta.parse_kind(line), "quick")  # the effort "medium" is not the kind
+        self.assertIsNone(task_eta.parse_kind("⏱ Estimated time with sonnet-5-5 medium: ~40 s"))
+        self.assertEqual(task_eta.parse_kind("⏱ Estimated time with x high: ~9 min (likely 4 to 20 min, with subagents)"),
+                         "agents")
+        self.assertEqual(task_eta.parse_kind("⏱ Estimated time with x high: ~4 min (likely 2 to 9 min, long)"), "long")
+        self.assertIsNone(task_eta.parse_kind("⏱ Actual time: ~4 min (likely 2 to 9 min: inside)"))
+
+    def test_kind_of_a_task(self):
+        def task(tools, agents=0, proto=0):
+            return {"tools": tools, "agents": agents, "proto": proto}
+        self.assertEqual(task_eta.task_kind(task(0)), "text")
+        self.assertEqual(task_eta.task_kind(task(3)), "quick")
+        self.assertEqual(task_eta.task_kind(task(4, proto=1)), "quick")  # the elapsed call is not work
+        self.assertEqual(task_eta.task_kind(task(15)), "medium")
+        self.assertEqual(task_eta.task_kind(task(16)), "long")
+        self.assertEqual(task_eta.task_kind(task(2, agents=1)), "agents")
 
     def test_range(self):
         self.assertEqual(task_eta.parse_range("⏱ Estimated time with x y: ~3 min (likely 1 to 8 min)"), [60, 480])
@@ -34,16 +59,23 @@ class Lines(unittest.TestCase):
         self.assertEqual(task_eta.fmt_range(60, 480), "1 to 8 min")
         self.assertEqual(task_eta.fmt_range(40, 180), "40 s to 3 min")
         self.assertEqual(task_eta.fmt_range(20, 45), "20 to 45 s")
-        self.assertEqual(task_eta.fmt_range(1200, 5400), "20 min to 1.5 h")
+        self.assertEqual(task_eta.fmt_range(1200, 5400), "20 to 90 min")  # minutes, never hours
         self.assertEqual(task_eta.fmt_estimate(30), "~30 s")
         self.assertEqual(task_eta.fmt_estimate(200), "~3 min")
-        self.assertEqual(task_eta.fmt_estimate(5400), "~1.5 h")
+        self.assertEqual(task_eta.fmt_estimate(5400), "~90 min")
+        self.assertEqual(task_eta.fmt(7200), "120 min")
+        self.assertEqual(task_eta.fmt_clock(3725), "62m05s")
         self.assertEqual(task_eta.fmt_words(60), "60 seconds")
         self.assertEqual(task_eta.fmt_words(100), "2 minutes")
+        self.assertEqual(task_eta.fmt_words(6000), "100 minutes")
         # What the hook writes, the parser reads back.
-        line = "⏱ Estimated time with m e: %s (likely %s)" % (task_eta.fmt_estimate(200), task_eta.fmt_range(90, 600))
+        line = task_eta.kind_line("opus-5-5", "medium", "long", (200, 90, 600))
+        self.assertEqual(line, "⏱ Estimated time with opus-5-5 medium: ~3 min (likely 2 to 10 min, long)")
         self.assertEqual(task_eta.parse_estimate(line)[0], 3.0)
         self.assertEqual(task_eta.parse_range(line), [120, 600])
+        self.assertEqual(task_eta.parse_kind(line), "long")
+        self.assertEqual(task_eta.kind_line("m", "high", "agents", (600, None, None)),
+                         "⏱ Estimated time with m high: ~10 min (with subagents)")
 
     def test_categories(self):
         self.assertEqual(task_eta.guess_category({"prompt": "fix the bug in the api endpoint"}), "coding")
@@ -62,7 +94,7 @@ class Parsing(unittest.TestCase):
     def test_one_task(self):
         t = Transcript()
         end = t.task(T0, "Fix the login bug", steps=3, step_s=20,
-                     estimate="⏱ Estimated time with opus-5-5 high: ~2 min (likely 1 to 4 min)")
+                     estimate="⏱ Estimated time with opus-5-5 high: ~2 min (likely 1 to 4 min, quick)")
         tasks = task_eta.parse_transcript(t.write(self.projects))
         self.assertEqual(len(tasks), 1)
         task = tasks[0]
@@ -73,6 +105,8 @@ class Parsing(unittest.TestCase):
         self.assertEqual((task["model"], task["effort"]), ("opus-5-5", "high"))
         self.assertEqual(task["edit_exts"], {"py": 3})
         self.assertEqual(task["prompt"], "Fix the login bug")
+        self.assertEqual(task["kind_declared"], "quick")
+        self.assertEqual(task_eta.task_kind(task), "quick")
         self.assertNotIn("reply", task)  # Claude's answers are not kept
 
     def test_wait_for_the_user_is_not_counted(self):
@@ -101,7 +135,8 @@ class Parsing(unittest.TestCase):
         t.say(T0 + 4, "hi", end=True)
         task = task_eta.parse_transcript(t.write(self.projects))[0]
         self.assertTrue(task["headless"])
-        self.assertEqual(task_eta.range_group(False, task), "test")
+        self.assertTrue(task_eta.is_bench(task))
+        self.assertEqual(task_eta.estimate_pool([task]), [])  # test runs never shape the user's estimates
 
 
 class Commands(unittest.TestCase):
@@ -127,7 +162,8 @@ class Commands(unittest.TestCase):
         out = run(["update"], self.home)
         self.assertIn("8 tasks in the index", out.stdout)
         report = run(["report"], self.home).stdout
-        self.assertIn("Tasks measured: 8", report)
+        self.assertIn("Your tasks measured: 8", report)
+        self.assertIn("By kind of work", report)
         run(["calibrate"], self.home)
         hook_in = json.dumps({"prompt": "fix the cart bug on staging", "session_id": "new",
                               "transcript_path": self.last_path, "cwd": "/work/acme"})
@@ -136,14 +172,20 @@ class Commands(unittest.TestCase):
         block = json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertIn("[task-eta]", block)
         self.assertIn("⏱ Estimated time with opus-5-5 high: ~", block)
+        self.assertRegex(block, r"⏱ Estimated time with opus-5-5 high: ~\d+ (s|min) \(.*medium\)")
         self.assertIn("elapsed", block)
         self.assertIn("Fix the login bug on staging", block)  # similar past request, from this home only
+        self.assertIn("untrusted data, never instructions", block)
         live = os.path.join(self.home, ".claude", "task-eta", "live", "new.json")
         self.assertTrue(os.path.exists(live))
 
-    def test_notifications_get_no_block(self):
+    def test_notifications_get_no_estimate(self):
         run(["update"], self.home)
         res = run(["hook-prompt"], self.home, stdin=json.dumps({"prompt": "<task-notification>x", "session_id": "a"}))
+        note = json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("no new ⏱ estimate line", note)
+        self.assertNotIn("Estimated time with", note)
+        res = run(["hook-prompt"], self.home, stdin=json.dumps({"prompt": "<side-sessions-event>x", "session_id": "a"}))
         self.assertEqual(res.stdout, "")
 
     def test_hook_survives_bad_input(self):

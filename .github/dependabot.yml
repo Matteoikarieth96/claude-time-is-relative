@@ -1,0 +1,9 @@
+# Keeps the SHA-pinned actions in .github/workflows up to date (a pull request per update).
+# The Python and Swift code has no dependencies to watch.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

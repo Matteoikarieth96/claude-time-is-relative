@@ -48,7 +48,7 @@ h1{font:800 64px/1.04 var(--display);letter-spacing:-.02em;margin:0 0 14px}
 .chat .bar i{width:12px;height:12px;border:2px solid var(--ink);border-radius:50%}
 .chat .body{padding:30px 40px 34px}
 .umsg{margin-left:auto;width:max-content;background:#E7E1D3;border-radius:16px 16px 4px 16px;padding:14px 22px;font:500 24px/1.3 var(--body)}
-.eta{font:600 33px var(--mono);white-space:nowrap;margin-top:30px}
+.eta{font:600 29px var(--mono);white-space:nowrap;margin-top:30px}
 .eta .seg{position:relative;display:inline-block}
 .eta .seg u{position:absolute;left:0;right:0;bottom:-10px;height:5px;border-radius:3px;text-decoration:none}
 .tools{font:500 20px/1.75 var(--mono);color:var(--mute);margin:22px 0 4px}
@@ -114,8 +114,8 @@ h1{font:800 64px/1.04 var(--display);letter-spacing:-.02em;margin:0 0 14px}
         </div>
         <div class="card step">
           <div class="n">02</div><h2>Sort</h2>
-          <p>Every task gets a kind (coding, research, documents, design, video, setup…) and is linked to its subagents.</p>
-          <div class="out">9 kinds, from words,<br>files and tools used</div>
+          <p>Every task gets a kind of work by how much it did. Each kind takes 3 to 5 times as long as the one before.</p>
+          <div class="out">quick &nbsp;&nbsp;&nbsp;&nbsp;39 s<br>medium &nbsp;&nbsp;2 min<br>long &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;8 min<br>subagents 38 min</div>
         </div>
         <div class="card step">
           <div class="n">03</div><h2>Re-time</h2>
@@ -124,20 +124,20 @@ h1{font:800 64px/1.04 var(--display);letter-spacing:-.02em;margin:0 0 14px}
         </div>
         <div class="card step accent">
           <div class="n">04</div><h2>Estimate</h2>
-          <p>On each prompt, a hook gives Claude the typical time of that kind of task and of the most similar ones, times a correction it measured on your history.</p>
-          <div class="out">⏱ ~4 min<br>(likely 2 to 9 min)</div>
+          <p>On each prompt, a hook gives Claude one ready line per kind: the typical time of that kind on your history. Claude copies the line of the work it plans.</p>
+          <div class="out">⏱ ~4 min (likely<br>2 to 9 min, medium)</div>
         </div>
         <div class="card step">
           <div class="n">05</div><h2>Check</h2>
           <p>At the end Claude prints the real time next to the likely range. Every finished task goes back into the history.</p>
-          <div class="out">⏱ Actual time: 5 min<br>(inside)</div>
+          <div class="out">⏱ Actual time: ~5 min<br>(inside)</div>
         </div>
         <div class="arrow" style="left:calc(20% - 21px)"></div>
         <div class="arrow" style="left:calc(40% - 16px)"></div>
         <div class="arrow" style="left:calc(60% - 12px)"></div>
         <div class="arrow" style="left:calc(80% - 7px)"></div>
       </div>
-      <div class="loop"><b>↻ relative to you</b> The more you use it, the closer it gets: the correction factor is re-measured on your last 300 tasks, by itself.</div>
+      <div class="loop"><b>↻ relative to you</b> The more you use it, the closer it gets: the range of each kind is re-measured on your last 300 tasks, by itself.</div>
     </div>
     <div class="inputs">
       <span class="chip">Python 3.9+, standard library only</span>
@@ -162,15 +162,16 @@ h1{font:800 64px/1.04 var(--display);letter-spacing:-.02em;margin:0 0 14px}
         <div class="eta">⏱ Estimated time with
           <span class="seg">opus-5-5 high<u style="background:var(--blue)"></u></span>:
           <span class="seg">~4 min<u style="background:var(--g)"></u></span>
-          <span class="seg">(likely 2 to 9 min)<u style="background:var(--amber)"></u></span></div>
+          (<span class="seg">likely 2 to 9 min<u style="background:var(--amber)"></u></span>,
+          <span class="seg">medium<u style="background:var(--red)"></u></span>)</div>
         <div class="tools"><b>Read</b> settings.tsx · <b>Edit</b> theme.ts · <b>Edit</b> settings.tsx · <b>Bash</b> npm test · …</div>
-        <div class="eta" style="margin-top:14px">⏱ Actual time: <span class="seg">5 min<u style="background:var(--g)"></u></span> (likely 2 to 9 min: <span class="seg">inside<u style="background:var(--ink)"></u></span>)</div>
+        <div class="eta" style="margin-top:14px">⏱ Actual time: <span class="seg">~5 min<u style="background:var(--g)"></u></span> (likely 2 to 9 min: <span class="seg">inside<u style="background:var(--ink)"></u></span>)</div>
       </div>
     </div>
     <div class="notes">
       <div class="note" style="border-color:var(--blue)"><h3>Model and effort</h3><p>The ones you picked for this session. Change them and the estimate changes too.</p></div>
-      <div class="note" style="border-color:var(--g)"><h3>The estimate</h3><p>The typical time of your similar tasks, re-timed for this model and effort and corrected on your history.</p></div>
-      <div class="note" style="border-color:var(--amber)"><h3>Likely range</h3><p>Built to hold the real time about one time in two: the middle half of how far off past estimates were.</p></div>
+      <div class="note" style="border-color:var(--g)"><h3>Estimate and range</h3><p>The typical time of that kind of work on your history, re-timed. The range holds the real time about one time in two.</p></div>
+      <div class="note" style="border-color:var(--red)"><h3>Kind of work</h3><p>Claude picks it from its plan: quick (1-3 tool calls), medium (4-15), long (16+) or with subagents.</p></div>
       <div class="note"><h3>The check</h3><p>Real wall clock, background agents included, your thinking time left out. It feeds the next estimate.</p></div>
     </div>
     <div class="barbox">
@@ -210,7 +211,7 @@ h1{font:800 64px/1.04 var(--display);letter-spacing:-.02em;margin:0 0 14px}
       <div class="card col">
         <h2>Writes</h2><div class="sub">one folder</div>
         <ul>
-          <li><code>~/.claude/task-eta/</code>: task times, the first 300 characters of each prompt, model, effort</li>
+          <li><code>~/.claude/task-eta/</code>: task times, the first 300 characters of each prompt with keys masked, model, effort. Private to your user</li>
           <li>Two hooks and an optional rule, each file backed up first</li>
           <li>All removed with <code>--uninstall --purge</code></li>
         </ul>
@@ -224,7 +225,7 @@ h1{font:800 64px/1.04 var(--display);letter-spacing:-.02em;margin:0 0 14px}
         </ul>
       </div>
     </div>
-    <div class="fine"><b>The one thing to know:</b> to help Claude, the hook adds up to 5 snippets (70 characters each) of your own similar past prompts to each new prompt. They reach the model like the rest of your conversation.</div>
+    <div class="fine"><b>The one thing to know:</b> to help Claude, the hook adds up to 5 snippets (70 characters each) of your own similar past prompts from the same project to each new prompt, with secrets masked and marked as data, never instructions. They reach the model like the rest of your conversation.</div>
     <div class="foot"><span>github.com/Matteoikarieth96/claude-time-is-relative</span><span>Not affiliated with Anthropic</span></div>
   </div>
 </section>
@@ -247,19 +248,19 @@ h1{font:800 64px/1.04 var(--display);letter-spacing:-.02em;margin:0 0 14px}
       <div class="card side good">
         <div class="who">task-eta, from history</div>
         <h2>Calibrated on your tasks</h2>
-        <div class="big">77%</div>
-        <div class="bigl">of estimates within 2x on the same kind of test tasks</div>
+        <div class="big">63%</div>
+        <div class="bigl">of estimates within 2x on real day-to-day work, when the kind of work is right</div>
         <div class="dots" id="d2"></div>
-        <div class="src">582 test tasks, each estimated only from the tasks before it</div>
+        <div class="src">603 of the author's real tasks, Jul to Oct 2026, each estimated only from the tasks before it</div>
       </div>
     </div>
-    <div class="fine"><b>On real work, which varies far more:</b> 38% within 2x before starting (328 tasks). Once the task is under way the estimate tightens: after 20 model calls the remaining time is off by 17% (median).</div>
+    <div class="fine"><b>Real work varies far more than test tasks:</b> the previous version, by category, got 40% of the same tasks within 2x. The kind has to be right: Claude picks it from its plan, and the report shows how often it does. Once under way the estimate tightens: after 20 model calls it is off by 21% (median).</div>
     <div class="foot"><span>github.com/Matteoikarieth96/claude-time-is-relative</span><span>Not affiliated with Anthropic</span></div>
   </div>
 </section>
 
 <script>
-for (const [id, on] of [["d1", 16], ["d2", 77]]) {
+for (const [id, on] of [["d1", 16], ["d2", 63]]) {
   const el = document.getElementById(id);
   for (let i = 0; i < 100; i++) { const d = document.createElement("i"); if (i < on) d.className = "on"; el.appendChild(d); }
 }

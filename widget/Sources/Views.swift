@@ -107,17 +107,18 @@ struct BadgeLabelStyle: LabelStyle {
 struct TaskRow: View {
     let item: TaskItem
     let now: Double
+    var hidePrompts = false
 
     var body: some View {
         let elapsed = item.elapsed(at: now)
         let waiting = item.state == .waiting
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(item.name)
+                Text(item.shownName(hidePrompts: hidePrompts))
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .help(item.data.prompt.map { "Last prompt: \($0)" } ?? "")
+                    .help(hidePrompts ? "" : item.data.prompt.map { "Last prompt: \($0)" } ?? "")
                 Spacer(minLength: 4)
                 StateBadge(item: item)
             }
@@ -162,10 +163,10 @@ struct TaskRow: View {
     private var note: String? {
         switch item.state {
         case .waiting:
-            return item.waitingText
+            return item.waitingText(hidePrompts: hidePrompts)
         case .background:
             let jobs = item.data.bgJobs ?? []
-            guard let first = jobs.first, !first.isEmpty else { return "background jobs" }
+            guard !hidePrompts, let first = jobs.first, !first.isEmpty else { return "background jobs" }
             return jobs.count == 1 ? first : "\(jobs.count) jobs: \(first)…"
         case .stale:
             return "quiet for \(clock(item.quiet ?? 0))"
@@ -222,7 +223,7 @@ struct TaskList: View {
             } else {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     if index > 0 { Divider().opacity(0.5) }
-                    TaskRow(item: item, now: store.now)
+                    TaskRow(item: item, now: store.now, hidePrompts: store.hidePrompts)
                 }
             }
             if all.count > TaskStore.pageSize || store.hiddenAutomated > 0 {
@@ -292,6 +293,7 @@ struct MenuView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Panel on the desktop", isOn: $prefs.panelVisible)
                 Toggle("Show automated runs (claude -p)", isOn: $store.showAutomated)
+                Toggle("Hide prompts and titles (screen sharing)", isOn: $store.hidePrompts)
                 Toggle("Open at login", isOn: Binding(
                     get: { prefs.loginOn },
                     set: { prefs.setLogin($0) }))

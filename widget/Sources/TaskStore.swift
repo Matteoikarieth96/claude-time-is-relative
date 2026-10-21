@@ -23,6 +23,10 @@ struct LiveTask: Decodable {
     var transcriptOffset: Double? = nil // transcript size at the prompt: Claude's ⏱ line comes after it
     var entrypoint: String? = nil       // "sdk-cli": a headless `claude -p` run (tests, scripts)
     var bgJobs: [String]? = nil         // background jobs still running when the turn ended
+    var kinds: [String: [Double?]]? = nil // per kind of work: [estimate, low, high] seconds, from the hook
+    var kindHint: String? = nil         // the kind the similar past requests point to (the hook's guess)
+    var kindDeclared: String? = nil     // the kind Claude declared in its ⏱ line (known at the end)
+    var estRange: [Double]? = nil       // the range Claude declared in its ⏱ line, seconds (known at the end)
 
     /// The same task with every number that is not a plausible time (NaN, infinite, absurdly large)
     /// dropped, so hostile or broken files cannot crash the conversions further on. Nil if even
@@ -34,9 +38,22 @@ struct LiveTask: Decodable {
         t.estimateS = sane(estimateS); t.lowS = sane(lowS); t.highS = sane(highS)
         t.estimateMin = sane(estimateMin); t.idleS = sane(idleS); t.endTs = sane(endTs); t.durS = sane(durS)
         t.transcriptOffset = sane(transcriptOffset)
+        if let r = estRange, r.count == 2, let lo = sane(r[0]), let hi = sane(r[1]), lo >= 0, hi > lo {
+            t.estRange = [lo, hi]
+        } else {
+            t.estRange = nil
+        }
+        t.kinds = kinds.map { all in
+            all.filter { kindNames.contains($0.key) }.mapValues { row in row.prefix(3).map { sane($0) } }
+        }
+        if let k = kindDeclared, !kindNames.contains(k) { t.kindDeclared = nil }
+        if let k = kindHint, !kindNames.contains(k) { t.kindHint = nil }
         return t
     }
 }
+
+/// The kinds of work task_eta.py estimates (KINDS there).
+let kindNames: Set<String> = ["quick", "medium", "long", "agents"]
 
 /// A number usable as seconds or a timestamp: finite and within ±1e11 (about 3,000 years).
 func sane(_ value: Double?) -> Double? {
@@ -61,6 +78,14 @@ struct InputMarker: Decodable {
     var kind: String?   // question, plan, choice, permission, reply (older versions: Italian names)
     var detail: String?
     var ts: Double?
+
+    /// The marker with a time that is plausible and not in the future (a hostile 1e300 made the
+    /// clock negative).
+    func sanitized(now: Double) -> InputMarker {
+        var m = self
+        m.ts = sane(ts).map { min($0, now) }
+        return m
+    }
 }
 
 /// In list order: what needs you first, finished tasks last.
@@ -84,6 +109,8 @@ struct TaskItem: Identifiable {
     let quiet: Double?             // seconds since the transcript last changed (open tasks only)
     var input: InputMarker? = nil  // the session waits for you
     var declared: Double? = nil    // Claude's ⏱ estimate, read from the transcript, seconds
+    var declaredRange: (low: Double, high: Double)? = nil  // the range in Claude's ⏱ line, seconds
+    var declaredKind: String? = nil  // the kind of work in Claude's ⏱ line
     var title: String? = nil       // the session's title in the Claude app sidebar
 
     var state: TaskState {
@@ -106,7 +133,7 @@ struct TaskItem: Identifiable {
         case .waiting:
             if data.status == "done" { return finished }
             if data.status == "background" { return upTo(now) }
-            return upTo(input?.ts ?? now)
+            return upTo(min(input?.ts ?? now, now))
         case .stale:
             return upTo(now - (quiet ?? 0))
         case .running, .background:
@@ -121,8 +148,16 @@ struct TaskItem: Identifiable {
         return data.estimateS
     }
 
-    /// The likely range, moved along when Claude wrote a different estimate than the hook's.
+    /// The likely range: the one in Claude's own ⏱ line (from the index at the end, or read from the
+    /// transcript), else the hook's range for the kind Claude declared, else the hook's suggestion
+    /// moved along when Claude wrote a different estimate.
     var range: (low: Double, high: Double)? {
+        if let r = data.estRange, r.count == 2 { return (r[0], r[1]) }
+        if let r = declaredRange, r.high > r.low { return r }
+        if let kind = declaredKind ?? data.kindDeclared, let row = data.kinds?[kind], row.count == 3,
+           let lo = row[1], let hi = row[2], hi > lo {
+            return (lo, hi)
+        }
         guard let lo = data.lowS, let hi = data.highS, hi > lo else { return nil }
         guard let est = estimate, let suggested = data.estimateS, suggested > 0 else { return (lo, hi) }
         let k = est / suggested
@@ -168,6 +203,11 @@ final class TaskStore: ObservableObject {
     @Published var showAutomated: Bool {
         didSet { UserDefaults.standard.set(showAutomated, forKey: "showAutomated") }
     }
+    /// Show the folder instead of prompts, session titles, questions and job names: the panel is on
+    /// every Space and the menu can be open while the screen is shared.
+    @Published var hidePrompts: Bool {
+        didSet { UserDefaults.standard.set(hidePrompts, forKey: "hidePrompts") }
+    }
 
     static let pageSize = 5
 
@@ -175,7 +215,7 @@ final class TaskStore: ObservableObject {
     private var timer: Timer?
     private var ticks = 0
     private let demo: Bool
-    private var declaredFound: [String: Double] = [:]  // task key -> Claude's estimate, seconds
+    private var declaredFound: [String: DeclaredLine] = [:]  // task key -> Claude's ⏱ line
     private var scannedUpTo: [String: UInt64] = [:]    // task key -> transcript bytes already read
     private var titles: [String: String] = [:]         // CLI session id -> title in the app sidebar
     private var titlesReadAt: Double = 0
@@ -202,12 +242,14 @@ final class TaskStore: ObservableObject {
         self.dir = dir
         self.demo = false
         self.showAutomated = UserDefaults.standard.bool(forKey: "showAutomated")
+        self.hidePrompts = UserDefaults.standard.bool(forKey: "hidePrompts")
     }
 
     init(demoItems: [TaskItem], now: Double) {
         self.dir = TaskStore.defaultDir
         self.demo = true
         self.showAutomated = false
+        self.hidePrompts = false
         self.items = demoItems
         self.now = now
     }
@@ -258,10 +300,12 @@ final class TaskStore: ObservableObject {
             let marker = task.session.map { dir.appendingPathComponent("\($0).input") }
             if let session = task.session, name == "\(session).json", let marker, isRegularFile(marker.path),
                let raw = try? Data(contentsOf: marker) {
-                item.input = (try? decoder.decode(InputMarker.self, from: raw)) ?? InputMarker()
+                item.input = ((try? decoder.decode(InputMarker.self, from: raw)) ?? InputMarker()).sanitized(now: now)
             }
-            if task.estimateMin == nil, task.status != "done" {
-                item.declared = declaredEstimate(task)
+            if task.estimateMin == nil, task.status != "done", let line = declaredLine(task) {
+                item.declared = line.seconds
+                item.declaredRange = line.range
+                item.declaredKind = line.kind
             }
             out.append(item)
         }
@@ -301,7 +345,7 @@ final class TaskStore: ObservableObject {
 
     /// Claude's ⏱ line, from its first reply after the prompt: the transcript is read from the
     /// offset the hook saved, at most 512 KB per reload, until the line shows up (or 8 MB in).
-    private func declaredEstimate(_ task: LiveTask) -> Double? {
+    private func declaredLine(_ task: LiveTask) -> DeclaredLine? {
         guard let path = task.transcript, let offset = task.transcriptOffset, offset >= 0,
               isRegularFile(path) else { return nil }
         let key = "\(task.session ?? path)|\(task.startTs)"
@@ -333,9 +377,9 @@ final class TaskStore: ObservableObject {
                   let message = obj["message"] as? [String: Any],
                   let content = message["content"] as? [[String: Any]] else { continue }
             for block in content where block["type"] as? String == "text" {
-                if let seconds = parseDeclaredEstimate(block["text"] as? String ?? "") {
-                    declaredFound[key] = seconds
-                    return seconds
+                if let line = parseDeclaredLine(block["text"] as? String ?? "") {
+                    declaredFound[key] = line
+                    return line
                 }
             }
         }
@@ -368,29 +412,68 @@ final class TaskStore: ObservableObject {
     }
 }
 
-/// Seconds from Claude's "⏱ Estimated time with <model> <effort>: ~N min" line (older versions
-/// wrote "⏱ Tempo richiesto con ..."). Only the first 300 characters of the line are looked at,
-/// with a pattern that has no adjacent open-ended repeats, so a hostile line stays fast.
-func parseDeclaredEstimate(_ text: String) -> Double? {
-    guard let re = try? NSRegularExpression(
-        pattern: #":[ \t]*(?:\*\*[ \t]*)?(?:~[ \t]*)?(\d{1,9}(?:[.,]\d{1,3})?)[ \t]*(hours?|h|ore|ora|minutes?|min|m|seconds?|sec|s)\b"#)
-    else { return nil }
+/// Claude's ⏱ line: the estimate, the likely range and the kind of work it declared.
+struct DeclaredLine {
+    var seconds: Double
+    var range: (low: Double, high: Double)? = nil
+    var kind: String? = nil
+}
+
+private let estimateRe = try? NSRegularExpression(
+    pattern: #":[ \t]*(?:\*\*[ \t]*)?(?:~[ \t]*)?(\d{1,9}(?:[.,]\d{1,3})?)[ \t]*(hours?|h|ore|ora|minutes?|min|m|seconds?|sec|s)\b"#)
+private let rangeRe = try? NSRegularExpression(
+    pattern: #"(?:\blikely|\btra)[ \t]+~?(\d{1,9}(?:[.,]\d{1,3})?)[ \t]*(s|min|h|ore)?[ \t]+(?:to|e)[ \t]+~?(\d{1,9}(?:[.,]\d{1,3})?)[ \t]*(s|min|h|ore)\b"#)
+private let kindRe = try? NSRegularExpression(
+    pattern: #"\b(quick|medium|long|veloce|medio|lungo|sub ?agents?)\b"#, options: [.caseInsensitive])
+
+private func inSeconds(_ number: Substring, _ unit: Substring) -> Double? {
+    guard let n = Double(number.replacingOccurrences(of: ",", with: ".")) else { return nil }
+    switch unit {
+    case "h", "hour", "hours", "ore", "ora": return n * 3600
+    case "s", "sec", "second", "seconds": return n
+    default: return n * 60
+    }
+}
+
+/// Claude's "⏱ Estimated time with <model> <effort>: ~N min (likely X to Y min, <kind>)" line (older
+/// versions: no kind, or in Italian "⏱ Tempo richiesto con ...: ~N min (probabile tra X e Y min,
+/// medio)"). Only the first 300 characters of the line are looked at, with patterns that have no
+/// adjacent open-ended repeats, so a hostile line stays fast. The range and the kind are read only
+/// after the estimate: the effort "medium" before the colon is not the kind.
+func parseDeclaredLine(_ text: String) -> DeclaredLine? {
+    guard let estimateRe, let rangeRe, let kindRe else { return nil }
     for line in text.split(separator: "\n")
     where line.contains("⏱") && (line.contains("Estimated time") || line.contains("richiesto")) {
         let s = String(line.prefix(300))
-        guard let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+        let all = NSRange(s.startIndex..., in: s)
+        guard let m = estimateRe.firstMatch(in: s, range: all),
               let numberRange = Range(m.range(at: 1), in: s), let unitRange = Range(m.range(at: 2), in: s),
-              let n = Double(s[numberRange].replacingOccurrences(of: ",", with: ".")) else { continue }
-        let seconds: Double
-        switch s[unitRange] {
-        case "h", "hour", "hours", "ore", "ora": seconds = n * 3600
-        case "s", "sec", "second", "seconds": seconds = n
-        default: seconds = n * 60
+              let value = inSeconds(s[numberRange], s[unitRange]), value > 0, value <= 7 * 24 * 3600  // a week at most
+        else { continue }
+        var out = DeclaredLine(seconds: value)
+        let after = m.range.location + m.range.length
+        let rest = NSRange(location: after, length: all.length - after)
+        if let r = rangeRe.firstMatch(in: s, range: rest),
+           let lo = Range(r.range(at: 1), in: s), let hi = Range(r.range(at: 3), in: s),
+           let hiUnit = Range(r.range(at: 4), in: s) {
+            let loUnit = Range(r.range(at: 2), in: s).map { s[$0] } ?? s[hiUnit]
+            if let low = inSeconds(s[lo], loUnit), let high = inSeconds(s[hi], s[hiUnit]),
+               high > low, high <= 7 * 24 * 3600 {
+                out.range = (low, high)
+            }
         }
-        return seconds > 0 && seconds <= 7 * 24 * 3600 ? seconds : nil  // a week at most
+        if let k = kindRe.firstMatch(in: s, range: rest), let kr = Range(k.range(at: 1), in: s) {
+            let word = s[kr].lowercased()
+            let legacy = ["veloce": "quick", "medio": "medium", "lungo": "long"]
+            out.kind = word.hasPrefix("sub") ? "agents" : (legacy[word] ?? word)
+        }
+        return out
     }
     return nil
 }
+
+/// Seconds of Claude's ⏱ estimate, if its line is there.
+func parseDeclaredEstimate(_ text: String) -> Double? { parseDeclaredLine(text)?.seconds }
 
 // MARK: - formatting
 
@@ -436,9 +519,14 @@ extension TaskItem {
     /// The row's name: the session title from the app sidebar, else the prompt.
     var name: String { title ?? data.prompt ?? "…" }
 
+    /// The row's name as shown: with prompts hidden, only the folder.
+    func shownName(hidePrompts: Bool) -> String { hidePrompts ? "Task in \(folderText)" : name }
+
     /// What the session waits for, in words.
-    var waitingText: String {
-        let detail = input?.detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    var waitingText: String { waitingText(hidePrompts: false) }
+
+    func waitingText(hidePrompts: Bool) -> String {
+        let detail = hidePrompts ? "" : input?.detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let what: String
         switch input?.kind {
         case "question", "domanda": what = "question for you"

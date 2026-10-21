@@ -8,6 +8,7 @@ import SwiftUI
 //   TaskETA                         the app (menu bar count + desktop panel)
 //   TaskETA --login on|off          open at login, then exit (used by build.sh)
 //   TaskETA --snapshot FILE.png [--dark] [--demo]   render the panel to a PNG, then exit
+//   TaskETA --selftest              check the parsers of files written by others, exit 0 if all pass
 //   TASKETA_DEBUG_DIR=DIR TaskETA    the app, also writing its state to DIR 4 times a second (for tests)
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -61,8 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     static func takeInstanceLock() -> Bool {
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/task-eta")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let fd = open(dir.appendingPathComponent(".tasketa.lock").path, O_CREAT | O_RDWR, 0o644)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        let fd = open(dir.appendingPathComponent(".tasketa.lock").path, O_CREAT | O_RDWR, 0o600)
         guard fd >= 0 else { return true } // no lock file possible: better two apps than none
         if flock(fd, LOCK_EX | LOCK_NB) != 0 {
             close(fd)
@@ -104,6 +106,60 @@ enum Snapshot {
         guard let cg = renderer.cgImage,
               let png = NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:]) else { return false }
         return (try? png.write(to: url)) != nil
+    }
+}
+
+/// Checks of the code that reads files written by others (Claude's ⏱ line in the transcript, the
+/// hooks' live and marker files). Run by CI and by tests/test_review.py.
+@MainActor
+enum SelfTest {
+    static func run() -> Bool {
+        var failures: [String] = []
+        func check(_ ok: Bool, _ what: String) { if !ok { failures.append(what) } }
+
+        // The line, with its range and kind; the effort "medium" before the colon is not the kind.
+        let line = parseDeclaredLine("⏱ Estimated time with sonnet-5-5 medium: ~4 min (likely 2 to 9 min, long)")
+        check(line?.seconds == 240, "estimate of the line")
+        check(line?.range?.low == 120 && line?.range?.high == 540, "range of the line")
+        check(line?.kind == "long", "kind of the line")
+        let italian = parseDeclaredLine("⏱ Tempo richiesto con opus-5-5 high: ~10 min (probabile tra 4 e 24 min, medio)")
+        check(italian?.seconds == 600 && italian?.range?.low == 240 && italian?.range?.high == 1440
+              && italian?.kind == "medium", "older Italian line")
+        let agents = parseDeclaredLine("⏱ Estimated time with opus-5-5 high: ~20 min (with subagents)")
+        check(agents?.kind == "agents" && agents?.range == nil, "line with subagents and no range")
+        check(parseDeclaredLine("⏱ Estimated time with sonnet-5-5 medium: ~40 s")?.kind == nil, "no kind given")
+        check(parseDeclaredLine("⏱ Actual time: ~4 min (likely 2 to 9 min: inside)") == nil, "closing line")
+        let started = Date()
+        _ = parseDeclaredLine("⏱ Estimated time with x: " + String(repeating: "~1 ", count: 200_000))
+        check(Date().timeIntervalSince(started) < 1, "a hostile line stays fast")
+
+        // A hostile marker time cannot make the clock negative, infinite or run ahead.
+        let now = Date().timeIntervalSince1970
+        let task = LiveTask(session: "s", cwd: "acme", transcript: nil, prompt: "secret plan for client X",
+                            startTs: now - 100, model: "opus-5-5", effort: "high", modelKnown: true,
+                            category: nil, estimateS: 60, estimateLabel: "~1 min", lowS: 30, highS: 90,
+                            estimateMin: nil, idleS: 0, status: "running", endTs: nil, durS: nil)
+        for ts in [1e300, -1e300, now + 1e9, Double.nan, Double.infinity] {
+            let marker = InputMarker(kind: "question", detail: nil, ts: ts).sanitized(now: now)
+            let e = TaskItem(id: "t", data: task, quiet: 1, input: marker).elapsed(at: now)
+            check(e.isFinite && e >= 0 && e <= 100.5, "marker time \(ts)")
+        }
+
+        // The range of the kind Claude declared, from the hook's per-kind numbers.
+        var withKinds = task
+        withKinds.kinds = ["long": [600, 300, 1200], "bogus": [1, 2, 3]]
+        withKinds.kindDeclared = "long"
+        let kindRange = withKinds.sanitized().map { TaskItem(id: "k", data: $0, quiet: 1).range } ?? nil
+        check(kindRange?.low == 300 && kindRange?.high == 1200, "range of the declared kind")
+        check(withKinds.sanitized()?.kinds?["bogus"] == nil, "unknown kinds dropped")
+
+        // Prompts and titles hidden for screen sharing.
+        let item = TaskItem(id: "h", data: task, quiet: 1, title: "Client X roadmap")
+        let hidden = item.shownName(hidePrompts: true)
+        check(hidden == "Task in acme" && !hidden.contains("secret") && !hidden.contains("Client"), "hidden name")
+
+        print(failures.isEmpty ? "selftest ok" : "selftest failed: " + failures.joined(separator: "; "))
+        return failures.isEmpty
     }
 }
 
@@ -160,6 +216,10 @@ if let i = args.firstIndex(of: "--login"), i + 1 < args.count {
     }
     print(on ? "Open at login on (status: \(LoginItem.status.rawValue))." : "Open at login off.")
     exit(0)
+}
+if args.contains("--selftest") {
+    let ok = MainActor.assumeIsolated { SelfTest.run() }
+    exit(ok ? 0 : 1)
 }
 if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
     _ = NSApplication.shared

@@ -123,7 +123,8 @@ class Installer(unittest.TestCase):
         for _ in range(3):
             self.install(*YES)
             self.install("--uninstall")
-        backups = [n for n in os.listdir(self.claude) if n.startswith("CLAUDE.md.task-eta-backup-")]
+        folder = os.path.join(self.claude, "task-eta", "backups")
+        backups = [n for n in os.listdir(folder) if n.startswith("CLAUDE.md.")]
         self.assertEqual(len(backups), 6)
 
     def test_only_its_own_hooks_are_removed(self):

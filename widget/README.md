@@ -19,6 +19,8 @@ Install it with `install.py` (it asks), or by hand:
 | `Sources/Prefs.swift` | preferences and open at login (`SMAppService`) |
 | `Sources/main.swift` | start-up, snapshots, demo data |
 
-For tests and screenshots: `TaskETA.app/Contents/MacOS/TaskETA --snapshot out.png [--dark] [--demo]` renders the panel to a PNG (`--demo` uses example tasks), and `TASKETA_DEBUG_DIR=/some/folder` makes the running app write its state there four times a second.
+It reads Claude's ⏱ line from the transcript (`⏱ Estimated time with <model> <effort>: ~N min (likely X to Y min, <kind>)`, older lines too) and draws the range Claude declared. Before sharing your screen, turn on **Hide prompts and titles** in the menu: rows then show only the folder, and questions and job names are hidden.
+
+For tests and screenshots: `TaskETA.app/Contents/MacOS/TaskETA --snapshot out.png [--dark] [--demo]` renders the panel to a PNG (`--demo` uses example tasks), `--selftest` checks the parsers of the files it reads (CI runs it), and `TASKETA_DEBUG_DIR=/some/folder` makes the running app write its state there four times a second.
 
 To stop the live files without removing anything: `touch ~/.claude/task-eta/live.off`.

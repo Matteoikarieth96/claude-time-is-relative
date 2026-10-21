@@ -36,6 +36,11 @@ mv "$APP.tmp" "$APP"
 echo "Built: $(pwd)/$APP"
 
 if [ "$run" = 1 ]; then
-  pkill -x TaskETA 2>/dev/null && sleep 1 || true
+  # Quit only a TaskETA started from this build folder, found by the exact path of its executable.
+  exe="$(pwd)/$APP/Contents/MacOS/TaskETA"
+  ps -axo pid=,comm= | while read -r pid comm; do
+    [ "$comm" = "$exe" ] && kill "$pid" 2>/dev/null
+  done
+  sleep 1
   open "$APP"
 fi
