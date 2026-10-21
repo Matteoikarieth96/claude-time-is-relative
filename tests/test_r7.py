@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import REPO, T0, Transcript, remove_tmp  # noqa: E402
@@ -118,11 +119,13 @@ def agent_task(start, dur, sub_runs, model="opus-5-5", effort="xhigh"):
 class BriefSubagents(unittest.TestCase):
     """Tasks whose subagents each do a short job get their own line, "with brief subagents"."""
 
-    def test_brief_is_the_median_subagent_run(self):
-        self.assertIs(task_eta.agents_brief(agent_task(T0, 600, [60, 120, 900])), True)
-        self.assertIs(task_eta.agents_brief(agent_task(T0, 3000, [700, 1500])), False)
+    def test_brief_means_every_subagent_under_10_minutes(self):
+        self.assertIs(task_eta.agents_brief(agent_task(T0, 600, [60, 120, 540])), True)
+        # One long subagent makes the task "with subagents" (the median would have said brief).
+        self.assertIs(task_eta.agents_brief(agent_task(T0, 3000, [180, 180, 180, 1800, 2400])), False)
         self.assertIsNone(task_eta.agents_brief(fake_task("opus-5-5", "xhigh", T0)))
-        self.assertIsNone(task_eta.agents_brief(agent_task(T0, 600, ["60", True])))  # odd records ignored
+        for odd in (["60", True], [float("nan")], [float("inf")], [-5]):
+            self.assertIsNone(task_eta.agents_brief(agent_task(T0, 600, odd)), odd)  # odd records ignored
 
     def lat(self):
         return {"opus-5-5|xhigh": (16.0, 4000)}
@@ -186,6 +189,77 @@ class BigWrites(unittest.TestCase):
             task = fake_task("opus-5-5", "high", T0)
             task.update(key="k", start="x", big_writes=bad)
             self.assertEqual(task_eta.clean_task(task)["big_writes"], 0, bad)
+
+
+class EtaByDeclaredKind(unittest.TestCase):
+    def past(self, n, tools, dur, marks):
+        out = []
+        for i in range(n):
+            t = fake_task("opus-5-5", "xhigh", T0 + 1000 * len(marks) + i + tools * 100000, dur=dur)
+            t.update(tools=tools, proto=0, call_marks=marks)
+            out.append(t)
+        return out
+
+    def test_the_declared_kind_picks_the_past_tasks(self):
+        quick = self.past(30, 2, 40.0, [0.0, 10.0, 20.0])          # done soon after call 2
+        long_ = self.past(30, 20, 900.0, [0.0, 10.0, 20.0, 30.0])   # still far from done
+        now = dict(fake_task("opus-5-5", "xhigh", T0 + 10 ** 7, dur=25.0), call_marks=[0.0, 10.0, 20.0],
+                   tools=2, proto=0, kind_declared="long")
+        left_long = task_eta.eta_for(now, quick + long_)[0]
+        self.assertAlmostEqual(left_long, 875.0)
+        left_all = task_eta.progressive_eta(now, quick + long_)[0]
+        self.assertLess(left_all, left_long)  # the quick ones pull the mixed answer down
+        now["kind_declared"] = None
+        self.assertEqual(task_eta.eta_for(now, quick + long_)[0], left_all)
+
+    def test_too_few_of_the_kind_falls_back_to_all(self):
+        quick = self.past(30, 2, 40.0, [0.0, 10.0, 20.0])
+        long_ = self.past(5, 20, 900.0, [0.0, 10.0, 20.0, 30.0])
+        now = dict(fake_task("opus-5-5", "xhigh", T0 + 10 ** 7, dur=25.0), call_marks=[0.0, 10.0, 20.0],
+                   tools=2, proto=0, kind_declared="long")
+        self.assertEqual(task_eta.eta_for(now, quick + long_), task_eta.progressive_eta(now, quick + long_))
+
+
+class ReviewFixes(unittest.TestCase):
+    """Findings of the independent review of round 7's changes."""
+
+    def test_model_family_reads_provider_names(self):
+        for name, family in (("opus-5-5", "opus"), ("us.anthropic.claude-opus-5-5-v1:0", "opus"),
+                             ("anthropic/claude-sonnet-5.5", "sonnet"), ("3-5-haiku", "haiku"),
+                             ("fable-5-1", "fable"), ("gpt-9", "gpt-9")):
+            self.assertEqual(task_eta.model_family(name), family, name)
+        work = [fake_task("us.anthropic.claude-opus-5-5-v1:0", "high", T0 + i) for i in range(5)]
+        lat = {"us.anthropic.claude-opus-5-5-v1:0|high": (14.0, 900),
+               "us.anthropic.claude-sonnet-5-5-v1:0|high": (8.0, 400),
+               "us.anthropic.claude-haiku-5-5-v1:0|medium": (7.0, 300)}
+        with unittest.mock.patch.object(task_eta, "valid_model", lambda m: m):
+            combos = task_eta.main_combos(work, lat=lat)
+        self.assertEqual(len(combos), 3, combos)
+        # A model only the speed table knows gets its most measured effort, not a guess.
+        self.assertIn(("us.anthropic.claude-sonnet-5-5-v1:0", "high"), combos)
+
+    def test_infinite_or_negative_numbers_are_dropped(self):
+        task = fake_task("opus-5-5", "high", T0)
+        task.update(key="k", start="x", calls_by={"opus-5-5|high": [40, float("inf")], "opus-5-5|low": [3, 9.0]},
+                    call_marks=[0.0, float("nan"), -1, 5.0],
+                    sub={"agents": [{"prompt": "p", "dur_s": float("inf")}, {"prompt": "q", "dur_s": 60}],
+                         "busy_s": 1, "work_s": 1, "calls_by": {"opus-5-5|high": [1, float("nan")]}})
+        clean = task_eta.clean_task(task)
+        self.assertEqual(clean["calls_by"], {"opus-5-5|low": [3, 9.0]})
+        self.assertEqual(clean["call_marks"], [0.0, 5.0])
+        self.assertEqual([a["prompt"] for a in clean["sub"]["agents"]], ["q"])
+        self.assertEqual(clean["sub"]["calls_by"], {})
+
+    def test_a_nan_accuracy_in_the_calibration_is_not_shown(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(remove_tmp, tmp)
+        path = os.path.join(tmp.name, "predictor.json")
+        with open(path, "w") as fh:
+            fh.write('{"version": 2, "kinds": {"quick": {"lo": 0.5, "hi": 1.8, "n": 40, "tested": 30, '
+                     '"within_2x": NaN, "coverage": 0.5}}, "work_tasks": 40, "at": 1}')
+        with unittest.mock.patch.object(task_eta, "PREDICTOR", path):
+            data = task_eta.load_predictor()
+        self.assertEqual(data["kinds"]["quick"]["tested"], 0)
 
 
 if __name__ == "__main__":

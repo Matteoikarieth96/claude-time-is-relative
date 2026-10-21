@@ -86,19 +86,23 @@ KIND_WORDS = {"quick": "quick", "medium": "medium", "long": "long", "agents": "w
 KIND_HELP = {"quick": "1-3 tool calls, e.g. write one file, or write it and run it once",
              "medium": "4-15 tool calls, e.g. a few files, or code with its tests run and fixed",
              "long": "16+ tool calls, e.g. a multi-file project worked until its tests pass",
-             "agents": "any Agent, Task or Workflow call; some subagent researches or builds for 10+ minutes",
-             "agents_brief": "Agent, Task or Workflow calls whose subagents each finish in under ~10 minutes"}
+             "agents": "any Agent, Task or Workflow call; at least one subagent researches or builds for 10+ minutes",
+             "agents_brief": "Agent, Task or Workflow calls whose subagents all finish in under ~10 minutes"}
 # A task with subagents takes about three times as long when they research or build for a while
 # as when each one does a short job (the author's tasks: median 51 min with subagents of 20+ min,
 # 11 min with subagents of 3 to 8 min). Claude knows which from its plan, so "with subagents" gets
-# a second line, "with brief subagents": the median of the tasks whose subagents' median run was
-# under BRIEF_AGENT_S. Out of sample, with the right one picked, within 2x went from 54% to 73% on
-# those tasks (round 7). Both lines are the kind "agents" for the parser and the widget.
+# a second line, "with brief subagents": the median of the tasks whose longest subagent run was
+# under BRIEF_AGENT_S. In the calibration, out of sample with the right line picked, within 2x went
+# from 57.5% to 67.5% on the author's 40 last tasks with subagents and the range narrowed from
+# 0.32-2.7x to 0.62-1.8x (round 7; other cut-offs gave 62.5-70%, within noise). Both lines are the
+# kind "agents" for the parser and the widget.
 BRIEF_AGENT_S = 600
 # A call that writes a big file or document is long model time that a count of calls misses (the
 # author's tasks of one kind took 3 to 8 times longer when their calls averaged 40 s or more). So
 # for the kinds, a Write or Edit of BIG_WRITE_CHARS or more new characters (about 150 lines)
 # counts as BIG_WRITE_UNITS tool calls, and the block tells Claude to count it the same way.
+# Tasks indexed before this rule whose transcripts are gone keep big_writes=0 (the old count) until
+# the history turns over.
 BIG_WRITE_CHARS = 6000
 BIG_WRITE_UNITS = 3
 WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
@@ -1094,9 +1098,9 @@ def clean_task(task):
             task.pop(k)
     calls = task.get("calls_by")
     task["calls_by"] = {c: v for c, v in calls.items() if isinstance(c, str) and "|" in c and isinstance(v, list)
-                        and len(v) == 2 and all(isinstance(x, NUM) for x in v)} if isinstance(calls, dict) else {}
+                        and len(v) == 2 and all(is_seconds(x) for x in v)} if isinstance(calls, dict) else {}
     marks = task.get("call_marks")
-    task["call_marks"] = [m for m in marks if isinstance(m, NUM)] if isinstance(marks, list) else []
+    task["call_marks"] = [m for m in marks if is_seconds(m)] if isinstance(marks, list) else []
     rng = task.get("est_range")
     if not (isinstance(rng, list) and len(rng) == 2 and all(isinstance(x, NUM) for x in rng)):
         task["est_range"] = None
@@ -1104,14 +1108,14 @@ def clean_task(task):
         task["estimate_min"] = None
     sub = task.get("sub")
     if sub is not None:
-        ok = (isinstance(sub, dict) and all(isinstance(sub.get(k, 0), NUM) for k in ("busy_s", "work_s", "last_end"))
+        ok = (isinstance(sub, dict) and all(is_seconds(sub.get(k, 0)) for k in ("busy_s", "work_s", "last_end"))
               and isinstance(sub.get("calls_by", {}), dict) and isinstance(sub.get("agents", []), list))
         if ok:
             sub["calls_by"] = {c: v for c, v in (sub.get("calls_by") or {}).items()
                                if isinstance(c, str) and "|" in c and isinstance(v, list) and len(v) == 2
-                               and all(isinstance(x, NUM) for x in v)}
+                               and all(is_seconds(x) for x in v)}
             sub["agents"] = [a for a in sub.get("agents") or [] if isinstance(a, dict)
-                             and isinstance(a.get("prompt", ""), str) and isinstance(a.get("dur_s", 0), NUM)]
+                             and isinstance(a.get("prompt", ""), str) and is_seconds(a.get("dur_s", 0))]
         else:
             task.pop("sub")
     for k in ("cwd", "session", "file", "category", "kind_declared"):
@@ -1374,11 +1378,15 @@ def work_units(task):
 
 
 def agents_brief(task):
-    """For a task with subagents: True if its subagents' median run was under BRIEF_AGENT_S,
-    False if not, None when their runs were not recorded."""
-    runs = [a.get("dur_s") for a in ((task.get("sub") or {}).get("agents") or [])
-            if isinstance(a, dict) and isinstance(a.get("dur_s"), NUM) and not isinstance(a.get("dur_s"), bool)]
-    return pct(runs, 0.5) < BRIEF_AGENT_S if runs else None
+    """For a task with subagents: True if every subagent run was under BRIEF_AGENT_S, False if
+    one was not, None when their runs were not recorded."""
+    runs = [a.get("dur_s") for a in ((task.get("sub") or {}).get("agents") or []) if isinstance(a, dict) and is_seconds(a.get("dur_s"))]
+    return max(runs) < BRIEF_AGENT_S if runs else None
+
+
+def is_seconds(value):
+    """A finite, non-negative number that is not a bool: what a stored duration must be."""
+    return isinstance(value, NUM) and not isinstance(value, bool) and math.isfinite(value) and value >= 0
 
 
 def task_kind(task):
@@ -1849,6 +1857,8 @@ def calibrate(idx, last_n=300):
         kind = task_kind(task)
         # A task with subagents is measured against the line it should have picked: brief or not.
         brief = agents_brief(task) if kind == "agents" else None
+        if brief is not None and not pred.category_median(None, task["model"], task["effort"], kind, not brief):
+            brief = None  # the block shows the split only when both halves have 5 tasks
         guess = pred.raw(task["prompt"], task["model"], task["effort"], kind=kind, brief=brief)[0] if brief is not None else None
         guess = guess or pred.raw(task["prompt"], task["model"], task["effort"], kind=kind)[0]
         if not guess:
@@ -1919,9 +1929,9 @@ def load_predictor():
         return None
     kinds = {}
     for kind, k in data["kinds"].items():
-        if kind in KINDS and isinstance(k, dict) and all(isinstance(k.get(f), NUM) and math.isfinite(k[f])
-                                                         for f in ("lo", "hi", "n")):
-            if not (isinstance(k.get("tested"), int) and all(isinstance(k.get(f), NUM) for f in ("within_2x", "coverage"))):
+        if kind in KINDS and isinstance(k, dict) and all(is_seconds(k.get(f)) for f in ("lo", "hi", "n")):
+            if not (isinstance(k.get("tested"), int) and not isinstance(k.get("tested"), bool)
+                    and all(is_seconds(k.get(f)) and k[f] <= 1 for f in ("within_2x", "coverage"))):
                 k["tested"] = 0
             kinds[kind] = k
     data["kinds"] = kinds
@@ -1998,6 +2008,16 @@ def fmt_estimate(seconds):
 
 # ---------------------------------------------------------------- estimate block
 
+MODEL_FAMILY = re.compile(r"(opus|sonnet|haiku|fable)", re.I)
+
+
+def model_family(model):
+    """"opus" for opus-5-5, us.anthropic.claude-opus-5-5-v1:0 or anthropic/claude-opus-5.5; a name
+    with none of the known family words is its own family."""
+    m = MODEL_FAMILY.search(model or "")
+    return m.group(1).lower() if m else model
+
+
 def main_combos(work, effort=None, k=4, lat=None):
     """The models a session may be on when its model is not known yet (the first prompt of a
     terminal or headless session): the ones used most in the last 200 tasks, then, from the speed
@@ -2012,11 +2032,14 @@ def main_combos(work, effort=None, k=4, lat=None):
     order += [m for m, _ in calls.most_common() if m not in order and valid_model(m)]
     out, families = [], set()
     for model in order:
-        family = model.split("-", 1)[0]
+        family = model_family(model)
         if family in families:
             continue
         families.add(family)
         usual = Counter(t["effort"] for t in recent if t.get("model") == model and valid_effort(t.get("effort")))
+        if not usual:  # a model only the speed table knows: its most measured effort
+            usual = Counter({c.split("|", 1)[1]: n for c, (_, n) in (lat or {}).items()
+                             if c.split("|", 1)[0] == model and valid_effort(c.split("|", 1)[1])})
         out.append((model, valid_effort(effort) or (usual.most_common(1)[0][0] if usual else "medium")))
         if len(out) >= k:
             break
@@ -2141,7 +2164,9 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
         value, low, high = brief if kind == "agents_brief" else ests[kind]
         k = ((corr or {}).get("kinds") or {}).get("agents" if kind == "agents_brief" else kind) or {}
         acc = ""
-        if k.get("tested"):
+        if kind == "agents_brief":
+            acc = "; accuracy measured with the line above" if k.get("tested") else ""
+        elif k.get("tested"):
             acc = "; if the kind is right: within 2x %d%%, range held %d%% (n=%d)" % (
                 round(100 * k["within_2x"]), round(100 * k["coverage"]), k["tested"])
         rng = ", likely %s" % fmt_range(low, high) if low is not None else " (not calibrated yet)"
@@ -2161,7 +2186,7 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
         for score, task in sims:
             lines.append('  [%s, %s] %s (was %s on %s, %d tool calls%s): "%s"' % (
                 task["cat"], kind_name(task_kind(task)), fmt(retime(task, lat, model, effort)),
-                fmt(task["dur_s"]), model_tag(task), work_tools(task),
+                fmt(task["dur_s"]), model_tag(task), work_units(task),
                 ", %d agents" % task["agents"] if task["agents"] else "", shown_prompt(task, 70)))
     if info is not None and ests:
         # The widget's guess until Claude's line is read: the kind most of the similar requests were.
@@ -2184,9 +2209,9 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
         for kind in KINDS:
             if kind in other:
                 lines.append(kind_line(m, e, kind, other[kind]))
-        short = brief_estimate(pred, corr, m, e)
-        if short and "agents" in other:
-            lines.append(kind_line(m, e, "agents_brief", short))
+        brief_est = brief_estimate(pred, corr, m, e)
+        if brief_est and "agents" in other:
+            lines.append(kind_line(m, e, "agents_brief", brief_est))
     if sims and sims[0][0] >= STRONG_SIM:
         best = sims[0][1]
         lines.append("A past request matches closely (it was %s): if you plan that same kind, you may add this "
@@ -2967,6 +2992,19 @@ def progressive_eta(task, past):
     return pct(totals, 0.5) - elapsed, pct(totals, 0.25) - elapsed, pct(totals, 0.75) - elapsed
 
 
+def eta_for(task, past):
+    """progressive_eta from the past tasks of the kind Claude declared for this one, when enough of
+    them reached this point; else from all past tasks. On round 7's runs, at half and three
+    quarters of their model calls, the median error went from 2.5x to 1.9x and from 2.3x to 1.6x
+    (slightly worse at a quarter: 2.9x to 3.5x, where the kind says little yet)."""
+    kind = declared_kind(task)
+    if kind and kind != "agents" and not task.get("agents"):
+        left, low, high = progressive_eta(task, [t for t in past if task_kind(t) == kind])
+        if left is not None:
+            return left, low, high
+    return progressive_eta(task, past)
+
+
 def cmd_eta():
     """Updated estimate for the task in progress, for an intermediate message."""
     task, _ = current_task()
@@ -2978,7 +3016,7 @@ def cmd_eta():
                   key=lambda t: t["start_ts"])
     elapsed = task["dur_s"] + max(0.0, time.time() - task["end_ts"])
     task = dict(task, dur_s=elapsed)
-    left, low, high = progressive_eta(task, past)
+    left, low, high = eta_for(task, past)
     if left is None:
         print("⏱ Elapsed: %s" % fmt(elapsed))
     else:
