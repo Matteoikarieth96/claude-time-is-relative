@@ -91,6 +91,8 @@ DATA_FILES = {
     "install.json": lambda d: isinstance(d, dict) and bool(d) and set(d) <= {"settings", "claude_md", "skill_previous"},
     "reparse.started": lambda d: isinstance(d, dict) and set(d) == {"at"} and is_number(d["at"]),
     "debug-hook.json": lambda d: isinstance(d, dict) and set(d) == {"input_keys", "model_fields", "env"},
+    "sleeps.json": lambda d: isinstance(d, list) and all(
+        isinstance(p, list) and len(p) == 2 and all(is_number(x) for x in p) for p in d),
 }
 # Logs task-eta appends to, checked by their first line ("<time> task-eta <where>" for errors).
 LOG_FILES = {
@@ -107,7 +109,7 @@ MARKED_FILES = {"index.lock": LOCK_MARK, "live.off": LIVE_OFF_MARK, ".tasketa.lo
 # Moved-aside copies and temporary files of the data files above: task-eta's own names, removed
 # by --purge in the default data folder only.
 ASIDE = re.compile(r"index\.json\.unreadable-\d{1,12}|(?:%s)\.\d{1,10}\.tmp" % "|".join(
-    re.escape(n) for n in ("index.json", "index.json.bak", "predictor.json", "categories.json", "config.json",
+    re.escape(n) for n in ("index.json", "index.json.bak", "predictor.json", "categories.json", "config.json", "sleeps.json",
                            "install.json", "reparse.started", "debug-hook.json")))
 OLD_BACKUP = re.compile(r".+\.task-eta-backup-\d{8}-\d{6}(?:-\d+)?")  # where version 1 kept its backups
 SAFE_ID = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-"

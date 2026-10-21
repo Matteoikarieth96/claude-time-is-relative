@@ -20,10 +20,12 @@ Commands:
   hook-input             PreToolUse/PermissionRequest/Notification hook: Claude waits for the user (widget)
   export-unlabeled FILE  work tasks with no category label yet, as JSONL (optional labelling)
   import-labels FILE...  merge {task key: category} JSON files into categories.json
+  import-sleeps          add the sleeps macOS logged (pmset) and re-parse, so past tasks leave them out
 
 Written for Python 3.9+ with the standard library only, so the hooks run
 with whatever python3 the machine has. macOS and Linux (it uses fcntl locks).
 """
+import bisect
 import fcntl
 import glob
 import hashlib
@@ -52,6 +54,7 @@ LOCK_MARK = "task-eta index lock\n"              # its content, so --purge can t
 ERRORS = os.path.join(DATA_DIR, "errors.log")    # tracebacks of failed runs: the hooks hide stderr
 SUGGESTIONS = os.path.join(DATA_DIR, "suggestions.jsonl")  # what the hook offered per prompt (no prompt text)
 LABELS = os.path.join(DATA_DIR, "categories.json")  # optional labels of past tasks (import-labels)
+SLEEPS = os.path.join(DATA_DIR, "sleeps.json")  # [sleep, wake] unix times of this Mac's sleeps, as the hooks saw them
 PREDICTOR = os.path.join(DATA_DIR, "predictor.json")  # likely range and accuracy of each kind of task
 # One small JSON per task, for the desktop widget: <session>.json is the session's current
 # task, <session>-<start>.json an earlier finished one. Written by the two hooks only.
@@ -68,6 +71,12 @@ APP_SESSIONS = os.path.join(HOME, "Library", "Application Support", "Claude", "c
 
 IDLE_CAP_S = 60 * 60     # a pause between turns longer than this is idle time, not work
 SILENCE_CAP_S = 15 * 60  # silence this long inside a turn (no subagent running) = waiting on the user
+# The Mac asleep is not work: nothing runs, yet the transcript's clock goes on (round 7: a test task
+# measured 34 min, 15 of them asleep with its report half written). The hooks record the kernel's
+# last sleep and wake (macOS), and the parser leaves the recorded sleep out of any gap in a task.
+SLEEP_KEEP = 2000             # recorded sleeps kept
+SLEEP_MAX_S = 7 * 24 * 3600   # a "sleep" longer than a week is not one we can use
+SLEEP_MIN_GAP_S = 60          # gaps shorter than this are not checked for sleep
 CALL_CAP_S = 10 * 60     # one model call longer than this was not all model time
 STALE_TURN_S = 10 * 60   # a prompt this long after the last activity starts a new task
 SNIPPET = 300            # characters of each prompt kept in the index
@@ -212,7 +221,7 @@ TOOL_USE_ID = re.compile(r"<tool-use-id>(toolu_\w{1,80})</tool-use-id>")
 NOTE_TASK_ID = re.compile(r"<task-id>([\w-]{1,80})</task-id>")
 AGENT_MSG_FROM = re.compile(r'<agent-message from="([\w-]{1,80})"')  # a background agent handing back
 LAUNCH_ID = re.compile(r"(?:agentId|Task ID|with ID)[ \t]*:?[ \t]*([\w-]{6,80})")
-PARSER_VERSION = 7  # bump when parse_transcript changes what it measures: update() then re-parses everything
+PARSER_VERSION = 8  # bump when parse_transcript changes what it measures: update() then re-parses everything
 EFFORTS = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
 # What a model name may look like before it is stored or shown ("opus-5-5", "claude-sonnet-5-5",
 # "us.anthropic.claude-opus-5-5-v1:0", "anthropic/claude-opus-5.5"): lowercase, at most 48 characters
@@ -576,6 +585,8 @@ def new_task(rec, ts, text):
         "tools": 0,
         "proto": 0,           # tool calls of the estimate protocol itself (elapsed, eta)
         "proto_at": None,     # seconds from the prompt to the last `elapsed` call (its final reply follows)
+        "slept_to": 0.0,      # recorded sleep is charged up to this time (never twice)
+        "slept": 0.0,         # seconds the Mac slept inside the task, left out of its duration
         "big_writes": 0,      # Write/Edit calls with BIG_WRITE_CHARS or more of new text
         "written": 0,         # new characters written by Write/Edit calls, in all
         "agents": 0,
@@ -661,6 +672,7 @@ def finish(cur, path):
         "tools": cur["tools"],
         "proto": cur["proto"],
         "proto_at": cur["proto_at"],
+        "slept_s": round(cur["slept"], 1),
         "big_writes": cur["big_writes"],
         "written": cur["written"],
         "agents": cur["agents"],
@@ -741,6 +753,14 @@ def parse_transcript(path):
                     cur["idle"] += gap
                     cur["seg_idle"] += gap
                     cur["last"] = ts
+            if cur is not None and cur["running"] and not cur["asks"]:
+                since = max(cur["last"], cur["slept_to"])
+                if ts - since > SLEEP_MIN_GAP_S:
+                    slept = sleep_overlap(since, ts)
+                    cur["idle"] += slept
+                    cur["seg_idle"] += slept
+                    cur["slept"] += slept
+                    cur["slept_to"] = ts
             if text is None and cur is None and kind == "user" and not rec.get("isMeta"):
                 # A session started by another session: the brief it got is its first prompt.
                 text = spawn_prompt(record_text(rec))
@@ -766,6 +786,11 @@ def parse_transcript(path):
                     # A pause over an hour is idle, unless an Agent or Workflow of this task ran through it.
                     if (pause > IDLE_CAP_S and not cur["trigger_agent"]) or (pause > 0 and not cur["trigger_own"]):
                         cur["idle"] += pause
+                    elif pause > SLEEP_MIN_GAP_S:
+                        slept = sleep_overlap(max(cur["last_stop"], cur["slept_to"]), seg_start)
+                        cur["idle"] += slept
+                        cur["slept"] += slept
+                        cur["slept_to"] = max(cur["slept_to"], seg_start)
                     cur["seg_start"] = seg_start
                     cur["seg_idle"] = 0.0
                     cur["running"] = True
@@ -1093,7 +1118,7 @@ def clean_task(task):
     for k in ("proto", "segments", "big_writes", "written"):
         if not isinstance(task.get(k), int) or isinstance(task.get(k), bool) or task[k] < 0:
             task[k] = 0
-    for k in ("end_ts", "wait_s", "active_s", "proto_at"):
+    for k in ("end_ts", "wait_s", "active_s", "proto_at", "slept_s"):
         if k in task and (not isinstance(task[k], NUM) or isinstance(task[k], bool) or not math.isfinite(task[k])):
             task.pop(k)
     calls = task.get("calls_by")
@@ -1218,6 +1243,138 @@ def write_json(path, data, fsync=False, **kw):
             os.fsync(fh.fileno())
     os.replace(tmp, path)
     return len(text)
+
+
+def read_sleep_pair():
+    """(last sleep, last wake) of this Mac as unix times, from the kernel's kern.sleeptime and
+    kern.waketime (no process started), or None on another system or on any error."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+        import ctypes.util
+
+        class Timeval(ctypes.Structure):
+            _fields_ = [("sec", ctypes.c_long), ("usec", ctypes.c_int32)]
+
+        libc = ctypes.CDLL(ctypes.util.find_library("c") or "/usr/lib/libSystem.B.dylib")
+        out = []
+        for name in (b"kern.sleeptime", b"kern.waketime"):
+            tv = Timeval()
+            size = ctypes.c_size_t(ctypes.sizeof(tv))
+            if libc.sysctlbyname(name, ctypes.byref(tv), ctypes.byref(size), None, ctypes.c_size_t(0)) != 0:
+                return None
+            out.append(tv.sec + tv.usec / 1e6)
+        return out[0], out[1]
+    except Exception:
+        return None
+
+
+_SLEEPS = [None, [], []]  # (mtime, size) of SLEEPS when read, sleep starts, wakes
+
+
+def load_sleeps():
+    """(starts, wakes): the recorded sleeps, sorted, valid and non-overlapping; ([], []) if none."""
+    try:
+        st = os.stat(SLEEPS)
+    except OSError:
+        return [], []
+    key = (st.st_mtime, st.st_size)
+    if _SLEEPS[0] == key:
+        return _SLEEPS[1], _SLEEPS[2]
+    pairs = []
+    try:
+        if st.st_size <= 1_000_000 and regular_file(SLEEPS):
+            with open(SLEEPS, encoding="utf-8") as fh:
+                data = json.load(fh)
+            for p in data if isinstance(data, list) else []:
+                if (isinstance(p, list) and len(p) == 2 and is_seconds(p[0]) and is_seconds(p[1])
+                        and p[0] < p[1] <= p[0] + SLEEP_MAX_S):
+                    pairs.append((float(p[0]), float(p[1])))
+    except (OSError, ValueError, RecursionError):
+        pairs = []
+    starts, wakes = [], []
+    for a, b in sorted(pairs):
+        if wakes and a < wakes[-1]:  # overlapping records: keep the earlier one
+            continue
+        starts.append(a)
+        wakes.append(b)
+    _SLEEPS[:] = [key, starts, wakes]
+    return starts, wakes
+
+
+def sleep_overlap(a, b):
+    """Seconds of recorded sleep between unix times a and b."""
+    if not b > a:
+        return 0.0
+    starts, wakes = load_sleeps()
+    total = 0.0
+    for i in range(bisect.bisect_right(wakes, a), len(starts)):
+        if starts[i] >= b:
+            break
+        total += min(b, wakes[i]) - max(a, starts[i])
+    return max(0.0, total)
+
+
+def record_sleep():
+    """Note the Mac's last sleep (the hooks call this), so the parser can leave it out of tasks."""
+    pair = read_sleep_pair()
+    if not pair:
+        return
+    s, w = pair
+    if not (is_seconds(s) and is_seconds(w) and 0 < s < w <= time.time() + 60 and w - s <= SLEEP_MAX_S):
+        return
+    starts, wakes = load_sleeps()
+    if any(abs(a - s) < 1 and abs(b - w) < 1 for a, b in zip(starts, wakes)):
+        return
+    pairs = sorted([[round(a, 3), round(b, 3)] for a, b in zip(starts, wakes)] + [[round(s, 3), round(w, 3)]])
+    write_json(SLEEPS, pairs[-SLEEP_KEEP:])
+
+
+PMSET_LINE = re.compile(r"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4}) +(Sleep|Wake|DarkWake) *\t")
+
+
+def parse_pmset_sleeps(text):
+    """[[sleep, wake], ...] from `pmset -g log`: each Sleep line paired with the next Wake or DarkWake."""
+    pairs, asleep = [], None
+    for line in text.splitlines():
+        m = PMSET_LINE.match(line)
+        if not m:
+            continue
+        try:
+            ts = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S %z").timestamp()
+        except ValueError:
+            continue
+        if m.group(2) == "Sleep":
+            asleep = ts if asleep is None else asleep
+        elif asleep is not None:
+            if asleep < ts <= asleep + SLEEP_MAX_S:
+                pairs.append([asleep, ts])
+            asleep = None
+    return pairs
+
+
+def cmd_import_sleeps():
+    """Add the sleeps macOS logged (pmset -g log, usually the last week or two) to the ones the
+    hooks recorded, then re-parse every transcript so past tasks leave them out too."""
+    import subprocess
+    if sys.platform != "darwin" or not os.path.exists("/usr/bin/pmset"):
+        print("Only on macOS: no sleep log here.")
+        return
+    try:
+        out = subprocess.run(["/usr/bin/pmset", "-g", "log"], capture_output=True, text=True, timeout=600,
+                             stdin=subprocess.DEVNULL, errors="replace").stdout
+    except (OSError, subprocess.SubprocessError) as err:
+        print("Could not read the sleep log: %s" % err)
+        return
+    found = parse_pmset_sleeps(out)
+    starts, wakes = load_sleeps()
+    pairs = sorted({(round(a, 3), round(b, 3)) for a, b in list(zip(starts, wakes)) + [tuple(p) for p in found]})
+    write_json(SLEEPS, [list(p) for p in pairs][-SLEEP_KEEP:])
+    idx, changed = update(force=True)
+    slept = sum(1 for t in idx["tasks"].values() if t.get("slept_s"))
+    print("%d sleeps in the macOS log, %d known in all; %d transcripts re-parsed, %d tasks had sleep left out."
+          % (len(found), len(pairs), changed, slept))
 
 
 def save_index(idx):
@@ -2670,6 +2827,10 @@ def log_suggestion(data, info):
 
 def cmd_hook_prompt():
     data = read_hook_input()
+    try:
+        record_sleep()
+    except Exception:
+        log_error("record_sleep")
     if os.environ.get("TASK_ETA_DEBUG"):
         # Debug aid: what the hook gets about the model and effort, written only in the data folder.
         write_json(os.path.join(DATA_DIR, "debug-hook.json"), {
@@ -2755,6 +2916,10 @@ REPARSE_STAMP = os.path.join(DATA_DIR, "reparse.started")
 
 def cmd_hook_stop():
     data = read_hook_input()
+    try:
+        record_sleep()
+    except Exception:
+        log_error("record_sleep")
     path = data.get("transcript_path")
     if not regular_file(path):
         return
@@ -3220,6 +3385,8 @@ def main(argv):
         print(json.dumps(data, indent=1) if data else "Not enough tasks to calibrate.")
     elif cmd == "import-labels":
         cmd_import_labels(argv[2:])
+    elif cmd == "import-sleeps":
+        cmd_import_sleeps()
     elif cmd == "report":
         cmd_report()
     else:

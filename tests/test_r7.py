@@ -1,6 +1,8 @@
 """Round 7 (100 benchmark runs in blocks of 10): what changed to close the gap between the
 estimate and the real time. Synthetic transcripts only."""
 import importlib
+import json
+import time
 import os
 import sys
 import tempfile
@@ -260,6 +262,89 @@ class ReviewFixes(unittest.TestCase):
         with unittest.mock.patch.object(task_eta, "PREDICTOR", path):
             data = task_eta.load_predictor()
         self.assertEqual(data["kinds"]["quick"]["tested"], 0)
+
+
+class MacSleep(unittest.TestCase):
+    """Time the Mac slept is left out of a task's duration."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.projects = os.path.join(self.tmp.name, ".claude", "projects")
+        self.sleeps = os.path.join(self.tmp.name, "sleeps.json")
+        patch = unittest.mock.patch.object(task_eta, "SLEEPS", self.sleeps)
+        patch.start()
+        self.addCleanup(patch.stop)
+        task_eta._SLEEPS[:] = [None, [], []]
+
+    def tearDown(self):
+        task_eta._SLEEPS[:] = [None, [], []]
+        remove_tmp(self.tmp)
+
+    def write_sleeps(self, pairs):
+        with open(self.sleeps, "w") as fh:
+            json.dump(pairs, fh)
+        os.utime(self.sleeps, (T0 + len(pairs), T0 + len(pairs) + 0.5))
+
+    def task_with_gap(self):
+        """An Agent call, then 20 minutes until the next record (the agent still running)."""
+        t = Transcript()
+        t.prompt(T0, "Research the topic with subagents")
+        t.tool(T0 + 5, "Agent", {"prompt": "dig"}, T0 + 1300)
+        t.say(T0 + 1310, "Done.", end=True)
+        t.stop(T0 + 1311)
+        return t.write(self.projects)
+
+    def test_a_recorded_sleep_inside_a_gap_is_left_out(self):
+        path = self.task_with_gap()
+        plain = task_eta.parse_transcript(path)[0]["dur_s"]
+        self.write_sleeps([[T0 + 100, T0 + 1000], [T0 + 5000, T0 + 6000]])
+        task = task_eta.parse_transcript(path)[0]
+        self.assertAlmostEqual(plain - task["dur_s"], 900.0)
+        self.assertEqual(task["slept_s"], 900.0)
+
+    def test_overlap_and_bad_records(self):
+        self.write_sleeps([[T0, T0 + 60], [T0 + 200, T0 + 100], ["x", 5], [T0 + 50, T0 + 70],
+                           [T0 + 300, T0 + 10 ** 7], [float("nan"), T0], True, [T0 + 500, T0 + 560]])
+        starts, wakes = task_eta.load_sleeps()
+        self.assertEqual(list(zip(starts, wakes)), [(T0, T0 + 60), (T0 + 500, T0 + 560)])
+        self.assertEqual(task_eta.sleep_overlap(T0 + 30, T0 + 530), 60.0)
+        self.assertEqual(task_eta.sleep_overlap(T0 + 600, T0 + 700), 0.0)
+        self.assertEqual(task_eta.sleep_overlap(T0 + 10, T0), 0.0)
+
+    def test_record_sleep_adds_each_pair_once(self):
+        now = time.time()
+        with unittest.mock.patch.object(task_eta, "read_sleep_pair", return_value=(now - 900, now - 300)):
+            task_eta.record_sleep()
+            task_eta.record_sleep()
+        with open(self.sleeps) as fh:
+            self.assertEqual(len(json.load(fh)), 1)
+        self.assertEqual(task_eta.stat.S_IMODE(os.stat(self.sleeps).st_mode) if hasattr(task_eta, "stat")
+                         else os.stat(self.sleeps).st_mode & 0o777, 0o600)
+        for bad in (None, (now, now - 5), (0, 0), (now - 10 ** 7, now), (now + 3600, now + 7200)):
+            with unittest.mock.patch.object(task_eta, "read_sleep_pair", return_value=bad):
+                task_eta.record_sleep()
+        with open(self.sleeps) as fh:
+            self.assertEqual(len(json.load(fh)), 1)
+
+    def test_the_kernel_answers_on_a_mac(self):
+        pair = task_eta.read_sleep_pair()
+        if sys.platform != "darwin":
+            self.assertIsNone(pair)
+        elif pair is not None:
+            self.assertTrue(all(isinstance(x, float) for x in pair))
+
+    def test_pmset_log_pairs(self):
+        log = "\n".join([
+            "2026-01-10 08:00:00 +0000 Sleep               \tEntering Sleep state due to 'Idle Sleep'",
+            "2026-01-10 08:00:01 +0000 Wake Requests       \t[process=dasd request=SleepService]",
+            "2026-01-10 08:00:27 +0000 DarkWake            \tDarkWake from Deep Idle",
+            "2026-01-10 08:01:00 +0000 Sleep               \tEntering Sleep state",
+            "2026-01-10 08:16:15 +0000 Wake                \tWake from Deep Idle",
+            "2026-01-10 08:20:00 +0000 Wake                \tno sleep before this one",
+            "garbage line",
+        ])
+        pairs = task_eta.parse_pmset_sleeps(log)
+        self.assertEqual([round(b - a) for a, b in pairs], [27, 915])
 
 
 if __name__ == "__main__":
