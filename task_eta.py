@@ -208,7 +208,7 @@ TOOL_USE_ID = re.compile(r"<tool-use-id>(toolu_\w{1,80})</tool-use-id>")
 NOTE_TASK_ID = re.compile(r"<task-id>([\w-]{1,80})</task-id>")
 AGENT_MSG_FROM = re.compile(r'<agent-message from="([\w-]{1,80})"')  # a background agent handing back
 LAUNCH_ID = re.compile(r"(?:agentId|Task ID|with ID)[ \t]*:?[ \t]*([\w-]{6,80})")
-PARSER_VERSION = 6  # bump when parse_transcript changes what it measures: update() then re-parses everything
+PARSER_VERSION = 7  # bump when parse_transcript changes what it measures: update() then re-parses everything
 EFFORTS = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
 # What a model name may look like before it is stored or shown ("opus-5-5", "claude-sonnet-5-5",
 # "us.anthropic.claude-opus-5-5-v1:0", "anthropic/claude-opus-5.5"): lowercase, at most 48 characters
@@ -573,6 +573,7 @@ def new_task(rec, ts, text):
         "proto": 0,           # tool calls of the estimate protocol itself (elapsed, eta)
         "proto_at": None,     # seconds from the prompt to the last `elapsed` call (its final reply follows)
         "big_writes": 0,      # Write/Edit calls with BIG_WRITE_CHARS or more of new text
+        "written": 0,         # new characters written by Write/Edit calls, in all
         "agents": 0,
         "asks": {},
         "estimate_min": None,
@@ -657,6 +658,7 @@ def finish(cur, path):
         "proto": cur["proto"],
         "proto_at": cur["proto_at"],
         "big_writes": cur["big_writes"],
+        "written": cur["written"],
         "agents": cur["agents"],
         "agent_ids": cur["agent_ids"],
         "workflow_runs": cur["workflow_runs"],
@@ -806,8 +808,10 @@ def parse_transcript(path):
                         target = str(inp.get("file_path") or "")
                         if name in ("Edit", "Write", "NotebookEdit") and "." in os.path.basename(target):
                             cur["edit_exts"][target.rsplit(".", 1)[-1].lower()[:8]] += 1
-                        if name in WRITE_TOOLS and written_chars(inp) >= BIG_WRITE_CHARS:
-                            cur["big_writes"] += 1
+                        if name in WRITE_TOOLS:
+                            size = written_chars(inp)
+                            cur["written"] += size
+                            cur["big_writes"] += size >= BIG_WRITE_CHARS
                         if name in WAKE_TOOLS:
                             cur["agents"] += 1
                             cur["pending_agents"].add(tid)
@@ -1082,7 +1086,7 @@ def clean_task(task):
     task["interrupted"] = bool(task.get("interrupted"))
     task["model"] = valid_model(task.get("model"))
     task["effort"] = valid_effort(task.get("effort"))
-    for k in ("proto", "segments", "big_writes"):
+    for k in ("proto", "segments", "big_writes", "written"):
         if not isinstance(task.get(k), int) or isinstance(task.get(k), bool) or task[k] < 0:
             task[k] = 0
     for k in ("end_ts", "wait_s", "active_s", "proto_at"):
