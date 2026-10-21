@@ -2168,7 +2168,9 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
                     estimate_s=round(value), estimate_label=fmt_estimate(value),
                     low_s=round(low) if low is not None else None, high_s=round(high) if high is not None else None,
                     kinds={k: [round(v), round(lo) if lo is not None else None, round(hi) if hi is not None else None]
-                           for k, (v, lo, hi) in ests.items()})
+                           for k, (v, lo, hi) in ests.items()},
+                    # "with brief subagents": for the suggestions log only (the widget knows the four kinds).
+                    brief=[round(x) if x is not None else None for x in brief] if brief else None)
     lines.append("If you will use tools, open the reply with the line of the kind you plan, copied as is, before "
                  "any tool call. Write only the line: no reasons, no mention of the hook. With no tools, no line:")
     if not current:
@@ -2634,7 +2636,7 @@ def log_suggestion(data, info):
     with os.fdopen(fd, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"ts": round(time.time(), 3), "session": data.get("session_id"),
                              "model": info.get("model"), "effort": info.get("effort"),
-                             "kinds": info["kinds"]}) + "\n")
+                             "kinds": info["kinds"], "brief": info.get("brief")}) + "\n")
 
 
 def cmd_hook_prompt():
