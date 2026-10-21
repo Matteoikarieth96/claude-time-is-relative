@@ -196,7 +196,10 @@ class R8OtherProjects(Home):
         from helpers import SCRIPT, clean_env
         # Not under /tmp: a project there counts as an automated test run and is left out of the
         # report (is_headless), and on Linux the temporary home is under /tmp.
-        work = tempfile.TemporaryDirectory(prefix="r8-work-", dir=os.path.dirname(os.path.abspath(__file__)))
+        tests_dir = os.path.dirname(os.path.realpath(__file__))
+        if (task_eta.project_for_cwd(tests_dir) + "-").startswith(("-private-tmp-", "-tmp-")):
+            self.skipTest("the checkout itself is in a temporary folder")
+        work = tempfile.TemporaryDirectory(prefix="r8-work-", dir=tests_dir)
         self.addCleanup(work.cleanup)
         here = os.path.realpath(os.path.join(work.name, "mine"))
         os.makedirs(here)
