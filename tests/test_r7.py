@@ -274,6 +274,12 @@ class MacSleep(unittest.TestCase):
         patch = unittest.mock.patch.object(task_eta, "SLEEPS", self.sleeps)
         patch.start()
         self.addCleanup(patch.stop)
+        lock = unittest.mock.patch.object(task_eta, "LOCK", os.path.join(self.tmp.name, "index.lock"))
+        lock.start()
+        self.addCleanup(lock.stop)
+        dd = unittest.mock.patch.object(task_eta, "DATA_DIR", self.tmp.name)
+        dd.start()
+        self.addCleanup(dd.stop)
         task_eta._SLEEPS[:] = [None, [], []]
 
     def tearDown(self):
@@ -322,8 +328,9 @@ class MacSleep(unittest.TestCase):
         self.write_sleeps([[T0, T0 + 60], [T0 + 200, T0 + 100], ["x", 5], [T0 + 50, T0 + 70],
                            [T0 + 300, T0 + 10 ** 7], [float("nan"), T0], True, [T0 + 500, T0 + 560]])
         starts, wakes = task_eta.load_sleeps()
-        self.assertEqual(list(zip(starts, wakes)), [(T0, T0 + 60), (T0 + 500, T0 + 560)])
-        self.assertEqual(task_eta.sleep_overlap(T0 + 30, T0 + 530), 60.0)
+        # Overlapping pairs become one sleep.
+        self.assertEqual(list(zip(starts, wakes)), [(T0, T0 + 70), (T0 + 500, T0 + 560)])
+        self.assertEqual(task_eta.sleep_overlap(T0 + 30, T0 + 530), 70.0)
         self.assertEqual(task_eta.sleep_overlap(T0 + 600, T0 + 700), 0.0)
         self.assertEqual(task_eta.sleep_overlap(T0 + 10, T0), 0.0)
 
@@ -349,6 +356,57 @@ class MacSleep(unittest.TestCase):
         elif pair is not None:
             self.assertTrue(all(isinstance(x, float) for x in pair))
 
+    def test_dark_wakes_join_the_stretches(self):
+        self.write_sleeps([[T0, T0 + 900], [T0 + 945, T0 + 1800], [T0 + 2500, T0 + 2600]])
+        starts, wakes = task_eta.load_sleeps()
+        self.assertEqual(list(zip(starts, wakes)), [(T0, T0 + 1800), (T0 + 2500, T0 + 2600)])
+
+    def test_system_records_never_charge_sleep(self):
+        """An API error at wake, then the reply: the sleep is charged once, never twice."""
+        for reply_at, expected in ((1010, 0.0), (800, 580.0)):  # over 15 min the silence rule takes it all
+            t = Transcript(session="s%d" % reply_at)
+            t.prompt(T0, "Fix the login bug")
+            t.tool(T0 + 5, "Edit", {"file_path": "/work/acme/app.py"}, T0 + 10)
+            t.records.append({"type": "system", "subtype": "api_error", "timestamp": task_eta.iso(T0 + 610)})
+            t.say(T0 + reply_at, "Done.", end=True)
+            t.stop(T0 + reply_at + 1)
+            path = t.write(self.projects)
+            task_eta._SLEEPS[:] = [None, [], []]
+            if os.path.exists(self.sleeps):
+                os.remove(self.sleeps)
+            plain = task_eta.parse_transcript(path)[0]["dur_s"]
+            self.write_sleeps([[T0 + 20, T0 + 600]])
+            task = task_eta.parse_transcript(path)[0]
+            self.assertAlmostEqual(plain - task["dur_s"], expected, msg=reply_at)
+            self.assertGreater(task["dur_s"], 0)
+
+    def test_huge_numbers_do_not_crash(self):
+        self.write_sleeps([[10 ** 400, 2], [T0, T0 + 100]])
+        self.assertEqual(task_eta.load_sleeps(), ([T0], [T0 + 100]))
+        self.assertFalse(task_eta.is_seconds(10 ** 400))
+        task = fake_task("opus-5-5", "high", T0)
+        task.update(key="k", start="x", calls_by={"opus-5-5|high": [10 ** 400, 5]})
+        self.assertEqual(task_eta.clean_task(task)["calls_by"], {})
+        task.update(dur_s=10 ** 400)
+        self.assertIsNone(task_eta.clean_task(task))
+
+    def test_a_covered_pair_is_not_written_again(self):
+        now = time.time()
+        self.write_sleeps([[now - 1000, now - 100]])
+        mtime = os.stat(self.sleeps).st_mtime
+        with unittest.mock.patch.object(task_eta, "read_sleep_pair", return_value=(now - 998, now - 99)):
+            self.assertFalse(task_eta.record_sleep())
+        self.assertEqual(os.stat(self.sleeps).st_mtime, mtime)
+
+    def test_the_power_log_is_read_at_most_once_an_hour(self):
+        marker = os.path.join(self.tmp.name, "sleeps-import.json")
+        with unittest.mock.patch.object(task_eta, "SLEEP_IMPORTED", marker), \
+                unittest.mock.patch("subprocess.Popen") as popen:
+            task_eta.import_sleeps_in_background()
+            task_eta.import_sleeps_in_background()
+        self.assertEqual(popen.call_count, 1)
+        self.assertEqual(popen.call_args[0][0][-2:], ["import-sleeps", "--no-reparse"])
+
     def test_pmset_log_pairs(self):
         log = "\n".join([
             "2026-01-10 08:00:00 +0000 Sleep               \tEntering Sleep state due to 'Idle Sleep'",
@@ -361,6 +419,10 @@ class MacSleep(unittest.TestCase):
         ])
         pairs = task_eta.parse_pmset_sleeps(log)
         self.assertEqual([round(b - a) for a, b in pairs], [27, 915])
+        # A Sleep with no Wake logged after it: the later Sleep starts the pair.
+        two = "\n".join(["2026-01-10 10:00:00 +0000 Sleep               \tx", "2026-01-10 12:00:00 +0000 Sleep               \tx",
+                         "2026-01-10 12:10:00 +0000 Wake                \tx"])
+        self.assertEqual([round(b - a) for a, b in task_eta.parse_pmset_sleeps(two)], [600])
 
 
 if __name__ == "__main__":
