@@ -87,11 +87,14 @@ Measured on the author's history: 715 real day-to-day tasks with tool calls, 30 
 |---|---|---|---|
 | Claude guessing, earlier benchmark on test tasks (96) | 16% | about 3x too long | n/a |
 | Previous version, by category and similar requests (645) | 40% | 75% | 47% |
-| This version, by kind of work, when the kind is right (603) | 63% | 47% | 46% |
-| quick / medium / long / with subagents, last 300 tasks | 62% / 65% / 59% / 57% | | 40% / 49% / 55% / 42% |
+| Version of 20 October, by kind of work, when the kind is right, last 258 tasks re-measured on 21 October | 63% | | 49% |
+| This version (21 October), same tasks, when the kind is right | 66% | | 55% |
+| quick / medium / long / with subagents, this version | 65% / 69% / 63% / 62% | | 52% / 56% / 59% / 52% |
+| Round 7 benchmark, 100 new test tasks on 5 models and efforts, the line as Claude wrote it: before the changes (10) | 20% | 68% | 10% |
+| the same benchmark after the changes (89) | 58% | 52% | 54% |
 | mid-task `eta`, after 20 model calls (47) | 91% | 21% | |
 
-Two limits, said plainly. The figures for this version assume Claude picks the right kind: it only has to know how much work it plans, which is easier than guessing minutes, but it can be wrong, and so far it declared a kind on too few tasks (6) to measure how often it is right. The hook shows that score in each block and `report` shows it too, once there are enough. And even with the right kind, the time of one task is noisy: about 6 times in 10 within 2x. Treat the first estimate as a calibrated guess, not a promise; it narrows once the task is under way. Run `python3 task_eta.py report` to see your own numbers.
+Two limits, said plainly. The figures for real tasks assume Claude picks the right kind: it only has to know how much work it plans, which is easier than guessing minutes, and it did on 17 of the author's last 20 tasks and 83 of 89 benchmark tasks, but it can be wrong. The hook shows that score in each block and `report` shows it too. And even with the right kind, the time of one task is noisy: about 6 or 7 times in 10 within 2x. The benchmark tasks were written to be checked headless, so they differ from day-to-day work: heavy code written from scratch ran 2 to 3 times over the line, and tasks whose subagents each worked a few seconds ran far under it. Treat the first estimate as a calibrated guess, not a promise; it narrows once the task is under way. Run `python3 task_eta.py report` to see your own numbers.
 
 ## Commands
 
