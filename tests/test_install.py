@@ -5,7 +5,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import INSTALL, run  # noqa: E402
+from helpers import INSTALL, run, remove_tmp  # noqa: E402
 
 OTHER = {"permissions": {"allow": ["Bash(ls:*)"]},
          "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}
@@ -26,7 +26,7 @@ class Installer(unittest.TestCase):
             fh.write("# My rules\n\n- be brief\n")
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tmp(self.tmp)
 
     def write_settings(self, data):
         with open(self.settings, "w") as fh:

@@ -14,7 +14,7 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import INSTALL, REPO, T0, Transcript, clean_env, run  # noqa: E402
+from helpers import INSTALL, REPO, T0, Transcript, clean_env, run, remove_tmp  # noqa: E402
 
 sys.path.insert(0, REPO)
 task_eta = importlib.import_module("task_eta")
@@ -42,7 +42,7 @@ class Home(unittest.TestCase):
         os.makedirs(self.projects)
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tmp(self.tmp)
 
     def tasks(self, prompts, project="-work-acme", session="s", start=T0, model="claude-opus-5-5", steps=5):
         """One transcript per prompt; returns the path of the last one."""

@@ -9,7 +9,7 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import INSTALL, REPO, T0, Transcript, run  # noqa: E402
+from helpers import INSTALL, REPO, T0, Transcript, run, remove_tmp  # noqa: E402
 
 sys.path.insert(0, REPO)
 task_eta = importlib.import_module("task_eta")
@@ -28,7 +28,7 @@ class Home(unittest.TestCase):
         os.makedirs(self.projects)
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tmp(self.tmp)
 
     def tasks(self, prompts, project="-work-acme", session="s", start=T0):
         path = None
@@ -194,7 +194,11 @@ class R8OtherProjects(Home):
     def test_report_and_status_do_not_quote_other_projects(self):
         import subprocess
         from helpers import SCRIPT, clean_env
-        here = os.path.realpath(os.path.join(self.home, "work", "mine"))
+        # Not under /tmp: a project there counts as an automated test run and is left out of the
+        # report (is_headless), and on Linux the temporary home is under /tmp.
+        work = tempfile.TemporaryDirectory(prefix="r8-work-", dir=os.path.dirname(os.path.abspath(__file__)))
+        self.addCleanup(work.cleanup)
+        here = os.path.realpath(os.path.join(work.name, "mine"))
         os.makedirs(here)
         mine = task_eta.project_for_cwd(here)
         client = self.tasks(["Confidential client Acme merger %d" % i for i in range(6)], project="-work-client")

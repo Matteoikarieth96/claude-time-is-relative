@@ -10,7 +10,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import REPO, T0, Transcript, iso, run  # noqa: E402
+from helpers import REPO, T0, Transcript, iso, run, remove_tmp  # noqa: E402
 
 sys.path.insert(0, REPO)
 task_eta = importlib.import_module("task_eta")
@@ -57,7 +57,7 @@ class Parsing(unittest.TestCase):
         self.projects = os.path.join(self.tmp.name, ".claude", "projects")
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tmp(self.tmp)
 
     def test_a_background_agent_belongs_to_the_task_that_launched_it(self):
         t = Transcript()
@@ -127,7 +127,7 @@ class Index(unittest.TestCase):
         run(["update"], self.home)
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tmp(self.tmp)
 
     def load(self):
         with open(os.path.join(self.data, "index.json")) as fh:
@@ -181,7 +181,7 @@ class Estimates(unittest.TestCase):
         run(["update"], self.home)
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tmp(self.tmp)
 
     def test_calibration_by_kind(self):
         res = run(["calibrate"], self.home)

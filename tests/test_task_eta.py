@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import REPO, T0, Transcript, run  # noqa: E402
+from helpers import REPO, T0, Transcript, run, remove_tmp  # noqa: E402
 
 sys.path.insert(0, REPO)
 task_eta = importlib.import_module("task_eta")
@@ -89,7 +89,7 @@ class Parsing(unittest.TestCase):
         self.projects = os.path.join(self.tmp.name, ".claude", "projects")
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tmp(self.tmp)
 
     def test_one_task(self):
         t = Transcript()
@@ -156,7 +156,7 @@ class Commands(unittest.TestCase):
             self.last_path = t.write(projects)
 
     def tearDown(self):
-        self.tmp.cleanup()
+        remove_tmp(self.tmp)
 
     def test_update_report_and_hook(self):
         out = run(["update"], self.home)

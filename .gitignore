@@ -33,3 +33,6 @@ state.txt
 click.txt
 panel.png
 popover.png
+
+# Working folder of a test that must not be under /tmp (removed after the test)
+tests/r8-work-*/

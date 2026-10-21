@@ -1,8 +1,10 @@
 """Synthetic Claude Code transcripts for the tests: no real session is ever used."""
 import json
 import os
+import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -84,7 +86,24 @@ def clean_env(home):
            if not k.startswith(("CLAUDE", "TASK_ETA", "ANTHROPIC"))}
     env["HOME"] = home
     env["CLAUDE_CONFIG_DIR"] = os.path.join(home, ".claude")
+    # macOS's system Python caches bytecode under $HOME: the Stop hook's background calibration
+    # would keep writing there while the test deletes the folder.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     return env
+
+
+def remove_tmp(tmp):
+    """Delete a TemporaryDirectory. A Stop hook leaves its calibration running in the background
+    for a moment, so a folder that is still being written is tried again for up to 10 s."""
+    for _ in range(40):
+        try:
+            shutil.rmtree(tmp.name)
+            break
+        except FileNotFoundError:
+            break
+        except OSError:
+            time.sleep(0.25)
+    tmp.cleanup()
 
 
 def run(args, home, stdin=None, extra_env=None, script=SCRIPT):
