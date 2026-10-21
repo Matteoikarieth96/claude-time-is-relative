@@ -81,11 +81,20 @@ SHOWN_SIMILAR = 5        # past requests quoted in the hook's block, at most
 # kind and Claude copies the one it plans ("text" = no tools, no line).
 KINDS = ["quick", "medium", "long", "agents"]
 KIND_MAX_TOOLS = {"quick": 3, "medium": 15}  # tool calls, the estimate protocol's own calls left out
-KIND_WORDS = {"quick": "quick", "medium": "medium", "long": "long", "agents": "with subagents"}
+KIND_WORDS = {"quick": "quick", "medium": "medium", "long": "long", "agents": "with subagents",
+              "agents_brief": "with brief subagents"}
 KIND_HELP = {"quick": "1-3 tool calls, e.g. write one file, or write it and run it once",
              "medium": "4-15 tool calls, e.g. a few files, or code with its tests run and fixed",
              "long": "16+ tool calls, e.g. a multi-file project worked until its tests pass",
-             "agents": "any Agent, Task or Workflow call"}
+             "agents": "any Agent, Task or Workflow call; some subagent researches or builds for 10+ minutes",
+             "agents_brief": "Agent, Task or Workflow calls whose subagents each finish in under ~10 minutes"}
+# A task with subagents takes about three times as long when they research or build for a while
+# as when each one does a short job (the author's tasks: median 51 min with subagents of 20+ min,
+# 11 min with subagents of 3 to 8 min). Claude knows which from its plan, so "with subagents" gets
+# a second line, "with brief subagents": the median of the tasks whose subagents' median run was
+# under BRIEF_AGENT_S. Out of sample, with the right one picked, within 2x went from 54% to 73% on
+# those tasks (round 7). Both lines are the kind "agents" for the parser and the widget.
+BRIEF_AGENT_S = 600
 KIND_ORDER = {"text": 0, "quick": 1, "medium": 2, "long": 3, "agents": 4}
 # The kind as written at the end of the line, in English or in the Italian of older versions
 # ("veloce", "medio", "lungo", "con sub agent"). Looked for only after the estimate itself,
@@ -1329,6 +1338,14 @@ def work_tools(task):
     return task["tools"] - (task.get("proto") or 0)
 
 
+def agents_brief(task):
+    """For a task with subagents: True if its subagents' median run was under BRIEF_AGENT_S,
+    False if not, None when their runs were not recorded."""
+    runs = [a.get("dur_s") for a in ((task.get("sub") or {}).get("agents") or [])
+            if isinstance(a, dict) and isinstance(a.get("dur_s"), NUM) and not isinstance(a.get("dur_s"), bool)]
+    return pct(runs, 0.5) < BRIEF_AGENT_S if runs else None
+
+
 def task_kind(task):
     """What the task turned out to be: text, quick, medium, long or agents (see KINDS)."""
     if task.get("agents"):
@@ -1679,13 +1696,20 @@ class Predictor:
         scored.sort(key=lambda pair: -pair[0])
         return scored[:k]
 
-    def category_median(self, cat, model, effort, kind=None):
+    def category_median(self, cat, model, effort, kind=None, brief=None):
         """Median re-timed duration of the category's tasks of this kind; with too few of them, of
-        all tasks of this kind; kind None = every kind. None when the kind has under 5 tasks."""
-        key = (cat, model, effort, kind)
+        all tasks of this kind; kind None = every kind. None when the kind has under 5 tasks.
+        brief True or False (kind "agents" only): just the tasks whose subagents were brief, or not
+        (see BRIEF_AGENT_S), None when there are under 5 of them."""
+        key = (cat, model, effort, kind, brief)
         if key not in self.medians:
             group = self.by_cat.get(cat) or []
-            if kind is not None:
+            if kind == "agents" and brief is not None:
+                group = [t for t in self.work if task_kind(t) == kind and agents_brief(t) is brief]
+                if len(group) < 5:
+                    self.medians[key] = None
+                    return None
+            elif kind is not None:
                 group = [t for t in group if task_kind(t) == kind]
                 if len(group) < 5:
                     group = [t for t in self.work if task_kind(t) == kind]
@@ -1708,7 +1732,7 @@ class Predictor:
             odds[kind] += s / total
         return odds
 
-    def raw(self, text, model, effort, kind=None, exclude=None):
+    def raw(self, text, model, effort, kind=None, exclude=None, brief=None):
         """(seconds, category guessed from the words, similar tasks, chance of subagents). For a
         kind (see KINDS): the median of that kind, re-timed. kind None (the older method, kept for
         comparison): the overall median pulled toward the similar past tasks as much as the best
@@ -1719,7 +1743,7 @@ class Predictor:
         odds = self.kind_odds(sims, cat).get("agents", 0.0)
         # The median of the kind, not of the category: on the author's tasks, in time order, the
         # category added nothing once the kind was known (2026-10-20 backtest, 290 tasks).
-        estimate = self.category_median(None, model, effort, kind)
+        estimate = self.category_median(None, model, effort, kind, brief)
         if kind is not None:
             # Once the kind is known, neither the category nor the similar requests made the
             # estimate better (time-ordered backtest on 260 of the author's tasks, 2026-10-20:
@@ -1788,7 +1812,10 @@ def calibrate(idx, last_n=300):
         if pred.n < 5 or call_latency(pred.lat, task["model"], task["effort"])[0] is None:
             continue
         kind = task_kind(task)
-        guess = pred.raw(task["prompt"], task["model"], task["effort"], kind=kind)[0]
+        # A task with subagents is measured against the line it should have picked: brief or not.
+        brief = agents_brief(task) if kind == "agents" else None
+        guess = pred.raw(task["prompt"], task["model"], task["effort"], kind=kind, brief=brief)[0] if brief is not None else None
+        guess = guess or pred.raw(task["prompt"], task["model"], task["effort"], kind=kind)[0]
         if not guess:
             continue
         ratio = task["dur_s"] / guess
@@ -1993,6 +2020,9 @@ def kind_estimates(pred, corr, model, effort):
     for kind in KINDS:
         k = ((corr or {}).get("kinds") or {}).get(kind)
         raw = pred.category_median(None, model, effort, kind)
+        if kind == "agents" and brief_estimate(pred, corr, model, effort):
+            # With a "brief subagents" line beside it, this one is for the longer subagents.
+            raw = pred.category_median(None, model, effort, kind, False) or raw
         if raw and prev is not None and raw < prev * 1.5:
             raw, k = prev * 1.5, None
         if not raw and prev is not None:
@@ -2001,6 +2031,16 @@ def kind_estimates(pred, corr, model, effort):
             out[kind] = (raw, raw * k["lo"], raw * k["hi"]) if k else (raw, None, None)
             prev = raw
     return out
+
+
+def brief_estimate(pred, corr, model, effort):
+    """(estimate, low, high) for "with brief subagents", or None while either half of the tasks
+    with subagents (brief, not brief) has under 5 tasks. The range is the kind's measured spread."""
+    raw = pred.category_median(None, model, effort, "agents", True)
+    if not raw or not pred.category_median(None, model, effort, "agents", False):
+        return None
+    k = ((corr or {}).get("kinds") or {}).get("agents")
+    return (raw, raw * k["lo"], raw * k["hi"]) if k else (raw, None, None)
 
 
 def kind_line(model, effort, kind, est):
@@ -2058,11 +2098,12 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
         "pick the smaller. Estimate for this request by kind of work, with how often it was right on "
         "your last tasks that really were that kind (out of sample: it holds only if you pick the right kind):",
     ]
-    for kind in KINDS:
-        if kind not in ests:
+    brief = brief_estimate(pred, corr, model, effort)
+    for kind in KINDS + ["agents_brief"]:
+        if kind not in ests and not (kind == "agents_brief" and brief):
             continue
-        value, low, high = ests[kind]
-        k = ((corr or {}).get("kinds") or {}).get(kind) or {}
+        value, low, high = brief if kind == "agents_brief" else ests[kind]
+        k = ((corr or {}).get("kinds") or {}).get("agents" if kind == "agents_brief" else kind) or {}
         acc = ""
         if k.get("tested"):
             acc = "; if the kind is right: within 2x %d%%, range held %d%% (n=%d)" % (
@@ -2098,17 +2139,16 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
                            for k, (v, lo, hi) in ests.items()})
     lines.append("If you will use tools, open the reply with the line of the kind you plan, copied as is, before "
                  "any tool call. Write only the line: no reasons, no mention of the hook. With no tools, no line:")
-    if current:
-        for kind in KINDS:
-            if kind in ests:
-                lines.append(kind_line(model, effort, kind, ests[kind]))
-    else:
+    if not current:
         lines.append("(no reply in this session yet: use the lines of the model you are)")
-        for m, e in candidates:
-            other = ests if (m, e) == (model, effort) else kind_estimates(pred, corr, m, e)
-            for kind in KINDS:
-                if kind in other:
-                    lines.append(kind_line(m, e, kind, other[kind]))
+    for m, e in ([(model, effort)] if current else candidates):
+        other = ests if (m, e) == (model, effort) else kind_estimates(pred, corr, m, e)
+        for kind in KINDS:
+            if kind in other:
+                lines.append(kind_line(m, e, kind, other[kind]))
+        short = brief_estimate(pred, corr, m, e)
+        if short and "agents" in other:
+            lines.append(kind_line(m, e, "agents_brief", short))
     if sims and sims[0][0] >= STRONG_SIM:
         best = sims[0][1]
         lines.append("A past request matches closely (it was %s): if you plan that same kind, you may add this "

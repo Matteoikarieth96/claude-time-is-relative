@@ -18,7 +18,8 @@ ELAPSED = "/usr/bin/python3 '/opt/task-eta/task_eta.py' elapsed"
 def fake_task(model, effort, start, dur=60.0, proto_at=None, headless=False):
     return {"key": "k%f" % start, "start_ts": start, "dur_s": dur, "tools": 5, "proto": 1, "agents": 0,
             "interrupted": False, "model": model, "effort": effort, "proto_at": proto_at,
-            "headless": headless, "call_marks": [0.0, dur - 5.0], "file": "/p/-work-acme/s.jsonl"}
+            "headless": headless, "call_marks": [0.0, dur - 5.0], "file": "/p/-work-acme/s.jsonl",
+            "prompt": "Fix the login bug", "calls_by": {}}
 
 
 class UnknownModelLines(unittest.TestCase):
@@ -105,6 +106,49 @@ class SelfCalibratingRange(unittest.TestCase):
         self.assertEqual(task_eta.pick_range_q(40, [11, 15, 21, 25]), 2)   # 28%, 38%, then 52%
         self.assertEqual(task_eta.pick_range_q(40, [5, 8, 10, 12]), len(qs) - 1)  # none: the widest
         self.assertEqual(task_eta.pick_range_q(10, [1, 2, 3, 4]), 0)       # too few tested: quartiles
+
+
+def agent_task(start, dur, sub_runs, model="opus-5-5", effort="xhigh"):
+    t = fake_task(model, effort, start, dur=dur)
+    t.update(agents=len(sub_runs), tools=8, sub={"agents": [{"prompt": "p", "dur_s": d} for d in sub_runs],
+                                                 "busy_s": 0, "work_s": 0, "calls_by": {}})
+    return t
+
+
+class BriefSubagents(unittest.TestCase):
+    """Tasks whose subagents each do a short job get their own line, "with brief subagents"."""
+
+    def test_brief_is_the_median_subagent_run(self):
+        self.assertIs(task_eta.agents_brief(agent_task(T0, 600, [60, 120, 900])), True)
+        self.assertIs(task_eta.agents_brief(agent_task(T0, 3000, [700, 1500])), False)
+        self.assertIsNone(task_eta.agents_brief(fake_task("opus-5-5", "xhigh", T0)))
+        self.assertIsNone(task_eta.agents_brief(agent_task(T0, 600, ["60", True])))  # odd records ignored
+
+    def lat(self):
+        return {"opus-5-5|xhigh": (16.0, 4000)}
+
+    def test_two_lines_once_both_halves_have_five_tasks(self):
+        work = ([agent_task(T0 + i, 600 + i, [120, 180]) for i in range(5)]
+                + [agent_task(T0 + 10 + i, 3000 + i, [1200, 1500]) for i in range(5)])
+        pred = task_eta.Predictor(work, self.lat())
+        short = task_eta.brief_estimate(pred, None, "opus-5-5", "xhigh")
+        self.assertAlmostEqual(short[0], 602.0)
+        ests = task_eta.kind_estimates(pred, None, "opus-5-5", "xhigh")
+        self.assertAlmostEqual(ests["agents"][0], 3002.0)  # the "with subagents" line: the longer ones
+        line = task_eta.kind_line("opus-5-5", "xhigh", "agents_brief", short)
+        self.assertTrue(line.endswith("with brief subagents)"), line)
+        minutes, _ = task_eta.parse_estimate(line)
+        self.assertEqual(task_eta.KIND_RE.search(line[line.index("~"):]).group(1).lower(), "subagents")
+        self.assertAlmostEqual(minutes, 10.0)
+
+    def test_one_line_while_a_half_is_too_small(self):
+        work = ([agent_task(T0 + i, 600 + i, [120]) for i in range(3)]
+                + [agent_task(T0 + 10 + i, 3000 + i, [1200]) for i in range(6)])
+        pred = task_eta.Predictor(work, self.lat())
+        self.assertIsNone(task_eta.brief_estimate(pred, None, "opus-5-5", "xhigh"))
+        all_agents = sorted(t["dur_s"] for t in work)
+        self.assertAlmostEqual(task_eta.kind_estimates(pred, None, "opus-5-5", "xhigh")["agents"][0],
+                               task_eta.pct(all_agents, 0.5))
 
 
 if __name__ == "__main__":
