@@ -221,7 +221,7 @@ TOOL_USE_ID = re.compile(r"<tool-use-id>(toolu_\w{1,80})</tool-use-id>")
 NOTE_TASK_ID = re.compile(r"<task-id>([\w-]{1,80})</task-id>")
 AGENT_MSG_FROM = re.compile(r'<agent-message from="([\w-]{1,80})"')  # a background agent handing back
 LAUNCH_ID = re.compile(r"(?:agentId|Task ID|with ID)[ \t]*:?[ \t]*([\w-]{6,80})")
-PARSER_VERSION = 8  # bump when parse_transcript changes what it measures: update() then re-parses everything
+PARSER_VERSION = 9  # bump when parse_transcript changes what it measures: update() then re-parses everything
 EFFORTS = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
 # What a model name may look like before it is stored or shown ("opus-5-5", "claude-sonnet-5-5",
 # "us.anthropic.claude-opus-5-5-v1:0", "anthropic/claude-opus-5.5"): lowercase, at most 48 characters
@@ -753,7 +753,10 @@ def parse_transcript(path):
                     cur["idle"] += gap
                     cur["seg_idle"] += gap
                     cur["last"] = ts
-            if cur is not None and cur["running"] and not cur["asks"]:
+            # Only a gap inside a live turn that this record continues: a sleep before the next
+            # prompt, or after the turn ended, is outside the task (round 7: two tasks fell to 0 s).
+            if (cur is not None and cur["running"] and not cur["asks"] and text is None
+                    and (cur["ended_at"] is None or kind == "assistant")):
                 since = max(cur["last"], cur["slept_to"])
                 if ts - since > SLEEP_MIN_GAP_S:
                     slept = sleep_overlap(since, ts)

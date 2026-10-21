@@ -302,6 +302,22 @@ class MacSleep(unittest.TestCase):
         self.assertAlmostEqual(plain - task["dur_s"], 900.0)
         self.assertEqual(task["slept_s"], 900.0)
 
+    def test_a_sleep_after_the_task_is_not_charged_to_it(self):
+        t = Transcript()
+        t.prompt(T0, "Fix the login bug")
+        t.tool(T0 + 5, "Edit", {"file_path": "/work/acme/app.py"}, T0 + 15)
+        t.say(T0 + 20, "Done.", end=True)                  # no Stop record: the turn stays open
+        t.prompt(T0 + 40000, "Now the signup page")
+        t.tool(T0 + 40005, "Edit", {"file_path": "/work/acme/app.py"}, T0 + 40015)
+        t.say(T0 + 40020, "Done.", end=True)
+        t.stop(T0 + 40021)
+        path = t.write(self.projects)
+        before = [x["dur_s"] for x in task_eta.parse_transcript(path)]
+        self.write_sleeps([[T0 + 1000, T0 + 30000]])      # asleep between the two tasks
+        after = task_eta.parse_transcript(path)
+        self.assertEqual([x["dur_s"] for x in after], before)
+        self.assertEqual([x["slept_s"] for x in after], [0.0, 0.0])
+
     def test_overlap_and_bad_records(self):
         self.write_sleeps([[T0, T0 + 60], [T0 + 200, T0 + 100], ["x", 5], [T0 + 50, T0 + 70],
                            [T0 + 300, T0 + 10 ** 7], [float("nan"), T0], True, [T0 + 500, T0 + 560]])
