@@ -62,8 +62,8 @@ Remove everything with `python3 install.py --uninstall`; add `--purge` to delete
 
 ![The estimate line, the actual time line and the widget bar](docs/the-line.png)
 
-- **Before**: `⏱ Estimated time with <model> <effort>: ~N min (likely X to Y min, <kind>)`. The kind is how much work Claude plans: **quick** (1 to 3 tool calls), **medium** (4 to 15), **long** (16 or more) or **with subagents** (any Agent, Task or Workflow call). The hook gives Claude one line per kind and Claude copies the one that matches its plan. On the author's history each kind takes 3 to 5 times as long as the one before (medians 39 s, 2 min, 8 min and 38 min), so the kind decides most of the estimate. The range is built to hold the real time about one time in two.
-- **After**: `⏱ Actual time: ~N min (likely X to Y min: inside)`. The `~` is there because the line is printed just before Claude's final reply, whose usual length is added.
+- **Before**: `⏱ Estimated time with <model> <effort>: ~N min (likely X to Y min, <kind>)`. The kind is how much work Claude plans: **quick** (1 to 3 tool calls), **medium** (4 to 15), **long** (16 or more), **with brief subagents** (Agent, Task or Workflow calls whose subagents all finish in under about 10 minutes) or **with subagents** (at least one researches or builds for longer). A file or document of more than about 150 lines that Claude writes counts as 3 calls, since writing it is long model time. The hook gives Claude one line per kind and Claude copies the one that matches its plan. On the author's history each kind takes 3 to 5 times as long as the one before (medians 39 s, 2 min, 8 min and 38 min), so the kind decides most of the estimate. Each kind's range is measured out of sample and widened until it holds the real time at least one time in two.
+- **After**: `⏱ Actual time: ~N min (likely X to Y min: inside)`. The `~` is there because the line is printed just before Claude's final reply: what usually followed this call in past sessions of the same kind (desktop app or terminal) is added, re-timed for the model in use.
 - **During a long task**: Claude may add `⏱ Elapsed: 12 min · about 8 min left (likely 5 to 15 min)`, re-estimated from the work done so far.
 - Times are in seconds under 90 s, otherwise in minutes (never hours).
 
@@ -100,6 +100,7 @@ python3 task_eta.py report          # your task times by kind, model seconds per
 python3 task_eta.py estimate "write a deck about our Q3 results"
 python3 task_eta.py estimate --model sonnet-5-5 --effort medium "fix the login bug"
 python3 task_eta.py status          # running and recently finished tasks
+python3 task_eta.py import-sleeps   # once: leave out the sleeps macOS logged, then re-read the history
 python3 install.py --check          # what is installed
 python3 install.py --uninstall      # remove it all (add --purge to delete the history)
 ```
@@ -108,7 +109,7 @@ python3 install.py --uninstall      # remove it all (add --purge to delete the h
 
 - A task is one prompt you typed plus all the work it caused, until the last action before your next prompt.
 - Background agents and workflows belong to the task that launched them, even when they report back after you have moved on: that task runs until their report is handled, and the task you are on is not charged for it. A task whose agent has not reported back yet stays out of the statistics until it does (or for 12 hours).
-- Not counted: time waiting for your answers, silences over 15 minutes inside a turn with no subagent running, pauses over an hour, and the tool calls of the estimate itself (`elapsed`, `eta`) when the kind is counted.
+- Not counted: time waiting for your answers, silences over 15 minutes inside a turn with no subagent running, pauses over an hour, time the Mac was asleep (the hooks record each sleep; `python3 task_eta.py import-sleeps` adds the ones macOS logged in the last week or so), and the tool calls of the estimate itself (`elapsed`, `eta`) when the kind is counted.
 - A session started by another session is its own task. Notifications from CI or other sessions do not stretch the task that receives them.
 - Tasks where Claude only kept waking up to watch something (a long build, a print) stay in the history but out of the statistics.
 - Every model call is timed per model and effort, so a past task can be replayed as if it had run on another model or effort: only the model time changes, tool time stays as it was.
@@ -118,6 +119,7 @@ python3 install.py --uninstall      # remove it all (add --purge to delete the h
 - It needs history. Estimates start after 5 tasks that used tools; a kind gets its own line once 5 past tasks were of that kind, and its likely range after about 15.
 - Claude Code deletes transcripts after 30 days by default (`cleanupPeriodDays`), so a first install starts with at most a month of history. From then on the index keeps every task it has read, with a daily copy (`index.json.bak`).
 - Re-timing for another effort changes only the time per model call, while effort mostly changes how many steps Claude takes.
+- The estimate is your typical task of that kind. Work much heavier than your usual (writing a whole app from scratch in a few calls at xhigh effort, say) runs longer than the line: in the round 7 benchmark such tasks took 2 to 3 times the estimate, and tasks whose subagents each did a few seconds of work took far less than the "brief subagents" line.
 - `report` also groups tasks by topic (coding, research, documents…) from keyword rules in English and Italian; that grouping is descriptive only and does not enter the estimate.
 - The transcript format is not a public API. A Claude Code update could change it; the tests cover the parser on synthetic transcripts.
 - Hooks use `sh`, so Windows is not supported.
