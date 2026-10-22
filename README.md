@@ -79,9 +79,13 @@ Example data. Green: on time. Yellow: past the estimate. Red: past the likely ra
 
 ## How accurate is it
 
+![Claude's time estimates are closing the gap: live estimates by version](docs/live-gap.png)
+
+**Live, in the author's own sessions.** Every estimate the hook printed from 20 to 22 October 2026, test runs left out (119 tasks). The real time fell inside the printed range 16 of 39 times with v1 (by category, 20 to 21 October), 9 of 15 with v2 (by kind of work, 21 October) and 18 of 25 with v3 (this version, with the round 7 changes, since the evening of 21 October). A typical estimate is now off by 1.5 times either way, against 2.2 with v1, and the median task takes 1.00 times its estimate, where v1's ran 1.8 times long. The samples are small and grow with every session.
+
 ![Claude guessing vs task-eta](docs/problem.png)
 
-Measured on the author's history: 715 real day-to-day tasks with tool calls, 30 July to 20 October 2026, automated test runs left out. Each task was estimated only from the tasks (and model speeds) that had ended before it began, as the hook would have done at the time:
+**Replayed on the author's history.** 715 real day-to-day tasks with tool calls, 30 July to 20 October 2026, automated test runs left out. Each task was estimated only from the tasks (and model speeds) that had ended before it began, as the hook would have done at the time: 715 real day-to-day tasks with tool calls, 30 July to 20 October 2026, automated test runs left out. Each task was estimated only from the tasks (and model speeds) that had ended before it began, as the hook would have done at the time:
 
 | | Within 2x of the real time | Median error | Real time inside the likely range |
 |---|---|---|---|
@@ -92,9 +96,10 @@ Measured on the author's history: 715 real day-to-day tasks with tool calls, 30 
 | quick / medium / long / with subagents, this version | 65% / 69% / 63% / 62% | | 52% / 56% / 59% / 52% |
 | Round 7 benchmark, 100 new test tasks on 5 models and efforts, the line as Claude wrote it: before the changes (10) | 20% | 68% | 10% |
 | the same benchmark after the changes (89) | 58% | 52% | 54% |
+| Round 8 benchmark (22 October), 182 new test tasks on Opus, Sonnet, Haiku and Fable, same code as round 7, the line as Claude wrote it | | | 49% (32% finished early, 19% over) |
 | mid-task `eta`, after 20 model calls (47) | 91% | 21% | |
 
-Two limits, said plainly. The figures for real tasks assume Claude picks the right kind: it only has to know how much work it plans, which is easier than guessing minutes, and it did on 17 of the author's last 20 tasks and 83 of 89 benchmark tasks, but it can be wrong. The hook shows that score in each block and `report` shows it too. And even with the right kind, the time of one task is noisy: about 6 or 7 times in 10 within 2x. The benchmark tasks were written to be checked headless, so they differ from day-to-day work: heavy code written from scratch ran 2 to 3 times over the line, and tasks whose subagents each worked a few seconds ran far under it. Treat the first estimate as a calibrated guess, not a promise; it narrows once the task is under way. Run `python3 task_eta.py report` to see your own numbers.
+Two limits, said plainly. The figures for real tasks assume Claude picks the right kind: it only has to know how much work it plans, which is easier than guessing minutes, and it did on 35 of the author's last 49 tasks, 83 of 89 round 7 tasks and 162 of 182 round 8 tasks, but it can be wrong. The hook shows that score in each block and `report` shows it too. And even with the right kind, the time of one task is noisy: about 6 or 7 times in 10 within 2x. The benchmark tasks were written to be checked headless, so they differ from day-to-day work: heavy code written from scratch ran 2 to 3 times over the line, and tasks whose subagents each worked a few seconds ran far under it (round 8: 4 of 24 subagent tasks inside the range, 19 finished early). Treat the first estimate as a calibrated guess, not a promise; it narrows once the task is under way. Run `python3 task_eta.py report` to see your own numbers.
 
 ## Commands
 
@@ -135,7 +140,7 @@ python3 install.py --uninstall      # remove it all (add --purge to delete the h
 | `install.py` | install, check and uninstall, with backups |
 | `SKILL.md` | the Claude Code skill: setup questions, reports, estimates on request |
 | `widget/` | the TaskETA menu bar app (SwiftUI) and its build script |
-| `docs/` | the images in this README; `docs/src/` has their source |
+| `docs/` | the images in this README; `docs/src/` has the source of the infographics except `live-gap.png`, drawn from the author's own history |
 | `tests/` | unit tests on synthetic transcripts (one per finding of each security review), plus a check that no personal data is published |
 
 Run the tests with `python3 -m unittest discover -s tests`.
