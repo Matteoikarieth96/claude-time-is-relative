@@ -21,7 +21,7 @@ def main(argv):
     page = "file://" + os.path.join(HERE, "infographics.html")
     for sheet, (name, height) in SHEETS.items():
         out = os.path.join(DOCS, name)
-        subprocess.run([chrome, "--headless=new", "--disable-gpu", "--hide-scrollbars",
+        subprocess.run([chrome, "--headless=new", "--use-mock-keychain", "--password-store=basic", "--disable-gpu", "--hide-scrollbars",
                         "--force-device-scale-factor=2", "--window-size=1600,%d" % height,
                         "--virtual-time-budget=6000", "--screenshot=" + out, page + "?show=" + sheet],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
