@@ -1,0 +1,1013 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Il campo di TaskETA</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<script>
+// The language: in TaskETA the app's (CAMPO_DATA.lang), on the web the browser's. T(en, it) gives the
+// text in it; the static texts below are Italian in the markup, with the English in data-en (text),
+// data-en-html (markup) and data-en-label (aria-label), swapped in at load.
+var LANG = (window.CAMPO_DATA && window.CAMPO_DATA.lang) || ((navigator.language || '').slice(0, 2) === 'it' ? 'it' : 'en');
+function T(en, it) { return LANG === 'it' ? it : en; }
+document.documentElement.lang = LANG;
+document.title = T('TaskETA’s Course', 'Il campo di TaskETA');
+// The fonts. In TaskETA (window.CAMPO_DATA, set by the app before the page loads) they come from the
+// fonts folder next to this page, with no internet, and the page fits the dashboard's widget; on the
+// web they come from Google Fonts. Without either, the system font.
+(function () {
+  var d = window.CAMPO_DATA;
+  if (d) {
+    var css = [['Barlow', 400, 'Barlow-Regular'], ['Barlow', 600, 'Barlow-SemiBold'], ['Barlow', 700, 'Barlow-Bold'],
+      ['Barlow Semi Condensed', 400, 'BarlowSemiCondensed-Regular'], ['Barlow Semi Condensed', 600, 'BarlowSemiCondensed-SemiBold'],
+      ['Barlow Semi Condensed', 700, 'BarlowSemiCondensed-Bold']].map(function (f) {
+      return '@font-face{font-family:"' + f[0] + '";font-weight:' + f[1] + ';font-display:swap;src:url("fonts/' + f[2] + '.ttf") format("truetype")}';
+    }).join('');
+    var s = document.createElement('style');
+    s.textContent = css;
+    document.head.appendChild(s);
+    if (d.embed) document.documentElement.classList.add('embed');
+    return;
+  }
+  [['preconnect', 'https://fonts.googleapis.com'], ['preconnect', 'https://fonts.gstatic.com', true],
+   ['stylesheet', 'https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap']]
+    .forEach(function (l) {
+      var e = document.createElement('link');
+      e.rel = l[0]; e.href = l[1];
+      if (l[2]) e.crossOrigin = '';
+      document.head.appendChild(e);
+    });
+})();
+</script>
+<style>
+/* Layout: one aerial minigolf park (SVG) as the whole page, a slim header above and one hint line
+   below; every hole and building opens a card on hover, focus or tap. Dark = golf di notte. */
+:root {
+  --bg: #eef2ea; --fg: #16241b; --muted: #56665b; --line: #cbd6c4; --plate: #fbfcf8;
+  --grass: #cfe3bd; --grass2: #c5dcb1; --hedge: #5f9a5a; --hill: #bfd7a8;
+  --lane: #3f8a4f; --lane-edge: #f1f6e6; --lane-off: #a8b8a4; --walk: #eadfc4; --walk-edge: #d6c8a3;
+  --water: #8cc8dc; --water-d: #5fa9c4; --shine: #eaf7fb;
+  --tree: #4f9152; --tree-l: #6aab62; --rock: #c9cbc0; --rock-d: #a9ad9f; --wood: #a77a4f; --roof: #3e6b74; --roof-l: #5a8a93;
+  --flag: #d1452e; --done: #2f7140; --ball: #ffffff; --todo: #93a296; --pocket: #111614;
+  --ice1: #eef7fc; --ice2: #c4e1f0; --felt: #1d6a48; --rail: #7a5232;
+  --display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1714; --fg: #e4ede5; --muted: #9bb0a2; --line: #2b3d34; --plate: #15241e;
+    --grass: #1c3223; --grass2: #1f3626; --hedge: #2f5433; --hill: #24402b;
+    --lane: #3f8a4f; --lane-edge: #2d4a34; --lane-off: #3d4b41; --walk: #3d3b2f; --walk-edge: #4c4938;
+    --water: #1f4d5c; --water-d: #2d6a7e; --shine: #7cc0d4;
+    --tree: #2d5a33; --tree-l: #3b7041; --rock: #4a4f48; --rock-d: #3a3e38; --wood: #8a6440; --roof: #2a4d55; --roof-l: #3f6d76;
+    --flag: #f06a50; --done: #82d191; --ball: #f7f7f2; --todo: #63746a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1714; --fg: #e4ede5; --muted: #9bb0a2; --line: #2b3d34; --plate: #15241e;
+  --grass: #1c3223; --grass2: #1f3626; --hedge: #2f5433; --hill: #24402b;
+  --lane: #3f8a4f; --lane-edge: #2d4a34; --lane-off: #3d4b41; --walk: #3d3b2f; --walk-edge: #4c4938;
+  --water: #1f4d5c; --water-d: #2d6a7e; --shine: #7cc0d4;
+  --tree: #2d5a33; --tree-l: #3b7041; --rock: #4a4f48; --rock-d: #3a3e38; --wood: #8a6440; --roof: #2a4d55; --roof-l: #3f6d76;
+  --flag: #f06a50; --done: #82d191; --ball: #f7f7f2; --todo: #63746a;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.45; }
+.page {
+  max-width: 1240px; margin: 0 auto; padding-block: 28px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 16px;
+}
+h1, h3 { font-family: var(--display); margin: 0; line-height: 1.1; text-wrap: balance; }
+p { margin: 0; }
+.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 10px 28px; }
+.top h1 { font-size: clamp(38px, 5vw, 56px); font-weight: 700; }
+.top .lead { color: var(--muted); font-size: 17px; max-width: 52ch; margin-top: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips span { border: 1px solid var(--line); background: var(--plate); border-radius: 99px; padding: 3px 11px; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chips .here { background: var(--flag); border-color: var(--flag); color: #fff; font-weight: 600; }
+
+.map-scroll { overflow-x: auto; border-radius: 26px; }
+.map-wrap { position: relative; min-width: 820px; }
+#park { display: block; width: 100%; height: auto; }
+
+/* park */
+.ground { fill: var(--grass); }
+.mow { fill: var(--grass2); }
+.hedge { fill: none; stroke: var(--hedge); stroke-width: 18; }
+.gate { fill: var(--walk); }
+.hill { fill: none; stroke: var(--hill); stroke-width: 10; }
+.pond { fill: var(--water); stroke: var(--water-d); stroke-width: 3; }
+.stream { fill: none; stroke: var(--water); stroke-width: 14; stroke-linecap: round; }
+.shine { pointer-events: none; fill: none; stroke: var(--shine); stroke-width: 2.5; stroke-linecap: round; stroke-dasharray: 10 22; animation: flow 7s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -64; } }
+.walk-e { fill: none; stroke: var(--walk-edge); stroke-width: 22; stroke-linecap: round; stroke-linejoin: round; }
+.walk { fill: none; stroke: var(--walk); stroke-width: 17; stroke-linecap: round; stroke-linejoin: round; }
+.rock { fill: var(--rock); stroke: var(--rock-d); stroke-width: 2; }
+.tree-s { fill: var(--fg); opacity: .12; }
+.tree { fill: var(--tree); }
+.tree-h { fill: var(--tree-l); }
+.wood { fill: var(--wood); }
+.bridge { fill: var(--wood); stroke: var(--rail); stroke-width: 2; }
+
+/* holes */
+.edge { fill: none; stroke: var(--lane-edge); stroke-width: 32; stroke-linecap: round; stroke-linejoin: round; }
+.lane { fill: none; stroke: var(--lane); stroke-width: 22; stroke-linecap: round; stroke-linejoin: round; transition: stroke-width .15s ease; }
+.hit { fill: none; stroke: transparent; stroke-width: 48; stroke-linecap: round; pointer-events: stroke; }
+.todo .lane { stroke: var(--lane-off); }
+.cup { fill: var(--pocket); }
+.pole { stroke: var(--fg); stroke-width: 2.2; stroke-linecap: round; }
+.pen { fill: var(--flag); }
+.todo .pen { fill: none; stroke: var(--todo); stroke-width: 1.8; }
+.now .pen { transform-box: fill-box; transform-origin: left center; animation: wave 1.4s ease-in-out infinite; }
+@keyframes wave { 50% { transform: scaleX(.72) skewY(6deg); } }
+.pulse { fill: none; stroke: var(--flag); stroke-width: 2.5; transform-box: fill-box; transform-origin: center; animation: pulse 2.2s ease-out infinite; }
+@keyframes pulse { 0% { transform: scale(.8); opacity: .9; } 100% { transform: scale(2.6); opacity: 0; } }
+.badge { fill: var(--plate); stroke: var(--fg); stroke-width: 1.6; }
+.done .badge { fill: var(--done); stroke: var(--done); }
+.now .badge { fill: var(--flag); stroke: var(--flag); }
+.todo .badge { stroke: var(--todo); }
+.bn { font-family: var(--display); font-weight: 700; font-size: 16px; text-anchor: middle; fill: var(--fg); pointer-events: none; }
+.done .bn { fill: var(--bg); }
+.now .bn { fill: #fff; }
+.todo .bn { fill: var(--muted); }
+[data-k] { cursor: pointer; outline: none; }
+.hole:hover .lane, .hole.active .lane, .hole:focus-visible .lane { stroke-width: 27; }
+.hole:focus-visible .hit, .hole.active .hit { stroke: var(--flag); stroke-opacity: .18; }
+.spot .focus { fill: none; stroke: transparent; stroke-width: 2.5; stroke-dasharray: 5 5; }
+.spot:hover .focus, .spot.active .focus, .spot:focus-visible .focus { stroke: var(--flag); }
+
+/* buildings */
+.roof { fill: var(--roof); stroke: var(--roof-l); stroke-width: 2; }
+.roof-l { stroke: var(--roof-l); stroke-width: 1.5; }
+.paper { fill: var(--plate); }
+.ink { stroke: var(--muted); stroke-width: 1.5; }
+.green-oval { fill: var(--lane); stroke: var(--lane-edge); stroke-width: 4; }
+.ice { stroke: var(--line); stroke-width: 2; }
+.felt { fill: var(--felt); stroke: var(--rail); stroke-width: 7; }
+.pocket { fill: var(--pocket); }
+.locked { fill: none; stroke: var(--fg); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: .55; }
+.lock { fill: var(--plate); stroke: var(--fg); stroke-width: 1.6; }
+.cone { fill: var(--flag); }
+.phone-b { fill: var(--fg); }
+.board { fill: #14191a; stroke: var(--wood); stroke-width: 3; }
+.led-s { font-family: var(--display); font-weight: 700; font-size: 9px; letter-spacing: .14em; text-anchor: middle; fill: #8fd9f5; }
+.led { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 700; font-size: 15px; text-anchor: middle; fill: #f5b942; }
+.phone-t { font-family: var(--display); font-weight: 700; font-size: 9px; text-anchor: middle; fill: #16241b; }
+.pen-floor { fill: var(--walk); stroke: var(--walk-edge); stroke-width: 1.5; }
+.solar { fill: #2c4d6e; stroke: var(--roof-l); stroke-width: 1.5; }
+.solar-l { stroke: #8fb6d6; stroke-width: 1; opacity: .8; }
+.antenna { stroke: var(--fg); stroke-width: 1.6; stroke-linecap: round; }
+.led { fill: var(--flag); animation: blink 1.6s steps(2) infinite; }
+@keyframes blink { 50% { opacity: .2; } }
+.screen { fill: var(--water); stroke: var(--fg); stroke-width: 1; }
+.ramp { stroke: var(--rail); stroke-width: 3; stroke-linecap: round; }
+.wire-l { stroke: var(--muted); stroke-width: .8; fill: none; }
+.rail { stroke: var(--wood); stroke-width: 2; }
+.hen { fill: #fbfaf4; stroke: #8f8d80; stroke-width: 1; }
+.hen-wing { fill: none; stroke: #8f8d80; stroke-width: .9; }
+.comb { fill: #d1452e; }
+.beak, .leg { fill: #e8a33a; stroke: #e8a33a; }
+.leg { stroke-width: 1.5; stroke-linecap: round; }
+.eye { fill: #111614; }
+.dino { fill: #5fae55; }
+.stripe { fill: var(--plate); }
+
+/* labels */
+.lbl { font-family: var(--display); font-weight: 600; font-size: 15px; text-anchor: middle; fill: var(--fg); paint-order: stroke; stroke: var(--grass); stroke-width: 5px; stroke-linejoin: round; pointer-events: none; }
+.zone-l { font-family: var(--display); font-weight: 700; font-size: 19px; letter-spacing: .1em; text-anchor: middle; fill: var(--fg); opacity: .78; paint-order: stroke; stroke: var(--grass); stroke-width: 5px; pointer-events: none; }
+.zone-s { font-family: var(--body); font-size: 13px; text-anchor: middle; fill: var(--muted); paint-order: stroke; stroke: var(--grass); stroke-width: 4px; pointer-events: none; }
+.on-water { stroke: var(--water); }
+.trail { fill: none; stroke: var(--done); stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+.ballc { fill: var(--ball); stroke: var(--fg); stroke-width: 1.2; }
+.sc-stem { stroke: var(--fg); stroke-width: 3; stroke-linecap: round; }
+.sc-deck { fill: var(--flag); stroke: var(--ball); stroke-width: 1.2; }
+.sc-wheel { fill: var(--pocket); stroke: var(--ball); stroke-width: 1.5; }
+.sc-hub { fill: var(--ball); }
+#ball { cursor: pointer; outline: none; }
+.sc-hit { fill: transparent; pointer-events: all; }
+#ball:focus-visible .sc-hit { stroke: var(--flag); stroke-width: 2; stroke-dasharray: 4 4; }
+.speed { stroke: var(--fg); stroke-width: 2; stroke-linecap: round; opacity: .6; }
+#lake { cursor: pointer; }
+.cap { fill: #d0312d; }
+.cap-brim { fill: #a8241f; }
+.cap-seam { fill: none; stroke: #7f1a17; stroke-width: .8; }
+.ripple { fill: none; stroke: var(--shine); stroke-width: 1.5; }
+.cap-in { transform-box: fill-box; transform-origin: center bottom; animation: capin .5s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes capin { from { transform: translateY(10px) scale(.2); opacity: 0; } }
+.cap-bob { transform-box: fill-box; transform-origin: center; animation: bob 2.6s ease-in-out infinite; }
+@keyframes bob { 0%, 100% { transform: translateY(0) rotate(-5deg); } 50% { transform: translateY(-2.5px) rotate(5deg); } }
+.splash { fill: none; stroke: var(--shine); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: splash .9s ease-out forwards; }
+@keyframes splash { from { transform: scale(.3); opacity: 1; } to { transform: scale(2.4); opacity: 0; } }
+.tag-bg { fill: var(--flag); }
+.tag-t { font-family: var(--display); font-weight: 700; font-size: 13px; letter-spacing: .08em; text-anchor: middle; fill: #fff; }
+.mbar { fill: color-mix(in srgb, var(--fg) 14%, transparent); }
+.mbar-f { fill: var(--done); }
+
+/* bushes and their secrets */
+.bush { cursor: pointer; }
+.bush.shake { transform-box: fill-box; transform-origin: center bottom; animation: shake .5s ease-in-out; }
+@keyframes shake { 20% { transform: rotate(-8deg); } 45% { transform: rotate(7deg); } 70% { transform: rotate(-3deg); } }
+.loot { pointer-events: none; transform-box: fill-box; transform-origin: center; animation: loot 2.6s ease-out forwards; }
+@keyframes loot { 0% { transform: translateY(0) scale(.3); opacity: 0; } 18% { transform: translateY(-30px) scale(1.15); opacity: 1; } 75% { transform: translateY(-36px) scale(1.15); opacity: 1; } 100% { transform: translateY(-46px) scale(1); opacity: 0; } }
+.loot-edge { stroke: var(--muted); stroke-width: 1; }
+.gold { fill: #e2b33c; stroke: #a8801f; stroke-width: 1; }
+.spike { fill: #8a6440; stroke: #5d4128; stroke-width: 1; stroke-linejoin: round; }
+.plane { fill: #fbfaf4; stroke: #2b7fb8; stroke-width: 1.4; stroke-linejoin: round; }
+.pick-s { stroke: var(--wood); stroke-width: 2.6; stroke-linecap: round; }
+.pick-h { fill: #9aa09a; stroke: #5f655f; stroke-width: 1.2; }
+.hint [hidden] { display: none; }
+.pop a { color: var(--fg); font-weight: 600; text-decoration-color: var(--flag); text-underline-offset: 3px; }
+
+/* the card */
+.pop { position: absolute; z-index: 5; width: 340px; max-width: calc(100% - 16px); background: var(--plate); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px 16px; box-shadow: 0 14px 34px rgba(10, 30, 15, .22); display: grid; gap: 9px; font-size: 15px; animation: pop-in .14s ease-out; }
+@keyframes pop-in { from { opacity: 0; transform: translateY(4px); } }
+.pop[hidden] { display: none; }
+.pop h3 { font-size: 26px; font-weight: 700; }
+.pop .row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
+.eyebrow { font-family: var(--display); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.state { font-family: var(--display); font-weight: 700; font-size: 12.5px; letter-spacing: .07em; text-transform: uppercase; border-radius: 99px; padding: 1px 9px; border: 1px solid currentColor; }
+.state.done { color: var(--done); }
+.state.now { background: var(--flag); border-color: var(--flag); color: #fff; }
+.state.todo { color: var(--muted); }
+.small { font-size: 13.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bar { height: 7px; border-radius: 99px; background: color-mix(in srgb, var(--fg) 10%, transparent); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 99px; background: var(--done); }
+.trials { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.trials li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 0 9px; align-items: baseline; }
+.tick { width: 15px; height: 15px; border-radius: 50%; border: 1.5px solid var(--todo); display: inline-block; position: relative; top: 2px; }
+.ok .tick { background: var(--done); border-color: var(--done); }
+.ok .tick::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 7.5px; border: solid var(--plate); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.part .tick { border-color: var(--done); background: conic-gradient(var(--done) 0 66%, transparent 66% 100%); }
+.trials .p { grid-column: 2; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ok .p { color: var(--done); }
+.power { border-top: 1px dashed var(--line); padding-top: 9px; display: grid; gap: 2px; }
+.power .pk { font-size: 12.5px; color: var(--muted); }
+.power b { font-family: var(--display); font-size: 19px; }
+.power p { color: var(--muted); }
+.tag { font-family: var(--display); font-weight: 600; font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; border: 1px solid currentColor; border-radius: 99px; padding: 0 6px; margin-left: 6px; vertical-align: 2px; white-space: nowrap; }
+.tag.new { color: var(--flag); }
+.tag.old { color: var(--muted); }
+.list { margin: 0; padding-left: 20px; display: grid; gap: 5px; }
+.plist { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.plist li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.plist li:last-child { border-bottom: 0; }
+.plist small { color: var(--muted); font-size: 12.5px; }
+.plist .mine { color: var(--done); font-weight: 600; font-size: 13px; }
+.plist .not { color: var(--muted); font-size: 13px; }
+.gtab { width: 100%; border-collapse: collapse; font-size: 14px; }
+.gtab td { padding: 3px 0; border-bottom: 1px solid var(--line); }
+.gtab td:last-child { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.gtab tr:last-child td { border-bottom: 0; }
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; font-size: 14.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.params { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.close { display: none; justify-self: end; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 99px; padding: 4px 14px; font: inherit; font-size: 14px; cursor: pointer; }
+.close:focus-visible { outline: 2px solid var(--flag); outline-offset: 2px; }
+
+.hint { color: var(--muted); font-size: 15px; display: flex; flex-wrap: wrap; gap: 4px 20px; }
+.hint b { color: var(--fg); font-weight: 600; }
+.hint a { color: var(--fg); font-weight: 600; text-decoration-color: var(--flag); text-underline-offset: 3px; }
+.hint a:focus-visible { outline: 2px solid var(--flag); outline-offset: 2px; border-radius: 3px; }
+footer { font-size: 13.5px; color: var(--muted); }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .92em; }
+
+@media (max-width: 700px), (hover: none) {
+  .pop.sheet { position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto; max-width: none; max-height: 72vh; overflow-y: auto; border-radius: 18px 18px 0 0;
+    padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+  .pop.sheet .close { display: inline-block; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shine, .now .pen, .pulse, .pop, .led, .cap-in, .cap-bob, .splash, .bush.shake, .loot { animation: none; }
+  .splash { display: none; }
+  .loot { transform: translateY(-34px); }
+}
+/* In the app (html.embed): the map fills the widget of the dashboard, with no scrolling and a short
+   header. At rest nothing moves: the water, the flag and the light only while the pointer is on it. */
+html.embed, .embed body { height: 100%; margin: 0; overflow: hidden; }
+.embed .page { height: 100%; max-width: none; padding: 12px 16px 10px; gap: 8px; grid-template-rows: auto minmax(0, 1fr) auto; }
+.embed .top { align-items: center; }
+.embed .top h1 { font-size: 26px; }
+.embed .top .lead, .embed footer { display: none; }
+.embed .chips span { font-size: 13px; }
+.embed .map-scroll { overflow: visible; border-radius: 0; min-height: 0; }
+.embed .map-wrap { min-width: 0; height: 100%; }
+.embed #park { height: 100%; }
+.embed .hint { font-size: 13px; gap: 2px 16px; }
+.embed body:not(:hover) * { animation-play-state: paused !important; }
+</style>
+
+<main class="page">
+  <header class="top">
+    <div>
+      <h1 data-en="The Course">Il campo</h1>
+      <p class="lead" data-en="TaskETA’s estimate game as a mini golf park. Each hole is a level: hover over it to see its trials and its power.">Il gioco delle stime di TaskETA come un parco di minigolf. Ogni buca è un livello: passaci sopra e ti spiega prove e potere.</p>
+    </div>
+    <div class="chips" id="chips" aria-label="Dove sei" data-en-label="Where you are">
+      <span class="here">Buca 5</span><span>Handicap 18</span><span>27.975 punti</span><span>158 buche fatte</span><span>4 poteri</span>
+    </div>
+  </header>
+
+  <div class="map-scroll" id="scroller">
+    <div class="map-wrap" id="wrap">
+      <svg id="park" viewBox="0 0 1200 720" role="group" aria-label="Mappa del campo: 9 buche nel Pratone dei Gardens, a Trump Lake e su Monte Donato, Urbe Hub, club house, chiosco, bacheca dei poteri, minigolf, widget iPhone, segnapunti di Claude, lavori in corso" data-en-label="Map of the course: 9 holes on the Gardens Lawn, at Trump Lake and on Monte Donato, Urbe Hub, club house, kiosk, powers board, mini golf, iPhone widget, Claude’s scoreboard, work in progress">
+        <defs>
+          <pattern id="mowp" width="56" height="56" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)"><rect class="mow" x="0" y="0" width="28" height="56"/></pattern>
+          <clipPath id="parkclip"><rect x="30" y="30" width="1140" height="660" rx="44"/></clipPath>
+          <!-- fairways: tee → cup -->
+          <path id="h1" d="M840 648 C790 648 760 598 700 598 L668 598"/>
+          <path id="h2" d="M604 652 L478 652 Q446 652 446 620 L446 586"/>
+          <path id="h3" d="M384 640 C344 600 308 664 262 628 S182 596 150 560"/>
+          <path id="h4" d="M118 486 L118 372 Q118 338 152 338 L262 338"/>
+          <path id="h5" d="M330 250 C384 196 470 290 540 240 L604 226"/>
+          <path id="h6" d="M760 300 L838 300 Q872 300 872 334 L872 418 Q872 452 838 452 L806 452"/>
+          <path id="h7" d="M982 232 L982 134 Q982 100 948 100 L862 100"/>
+          <path id="h8" d="M782 144 C722 92 662 172 602 124 S522 84 474 112"/>
+          <path id="h9" d="M384 150 L304 150 Q272 150 272 118 L272 106 Q272 74 240 74 L150 74"/>
+          <!-- walkways: entrance → tee 1, then cup N → tee N+1 -->
+          <path id="w0" d="M1060 716 C1040 676 912 690 840 648"/>
+          <path id="w1" d="M668 598 C650 636 628 652 604 652"/>
+          <path id="w2" d="M446 586 C440 626 410 640 384 640"/>
+          <path id="w3" d="M150 560 C136 534 118 514 118 486"/>
+          <path id="w4" d="M262 338 C300 330 312 280 330 250"/>
+          <path id="w5" d="M604 226 C684 216 722 300 760 300"/>
+          <path id="w6" d="M806 452 C930 476 994 330 982 232"/>
+          <path id="w7" d="M862 100 C832 104 802 120 782 144"/>
+          <path id="w8" d="M474 112 C440 128 410 150 384 150"/>
+          <path id="wc" d="M1060 716 C1060 660 1036 616 1012 594"/>
+          <path id="wm" d="M1012 526 C1030 488 1076 470 1085 432"/>
+        </defs>
+
+        <rect class="ground" x="30" y="30" width="1140" height="660" rx="44"/>
+        <rect x="30" y="30" width="1140" height="660" rx="44" fill="url(#mowp)"/>
+        <g clip-path="url(#parkclip)">
+          <ellipse class="hill" cx="430" cy="40" rx="430" ry="170"/>
+          <ellipse class="hill" cx="430" cy="40" rx="330" ry="122"/>
+          <ellipse class="hill" cx="430" cy="40" rx="225" ry="78"/>
+        </g>
+        <rect class="hedge" x="30" y="30" width="1140" height="660" rx="44"/>
+        <rect class="gate" x="1032" y="676" width="56" height="26"/>
+
+        <!-- water -->
+        <path class="stream" d="M540 302 C528 270 560 222 546 176"/>
+        <path class="pond" id="lake" d="M420 380 C410 320 480 296 560 300 C640 304 716 320 712 380 C708 440 640 466 560 462 C480 458 430 440 420 380 Z"/>
+        <path class="shine" d="M460 360 C500 344 540 342 580 346"/>
+        <path class="shine" d="M520 416 C570 428 620 420 668 400"/>
+        <path class="shine" d="M600 330 C630 330 660 336 684 350"/>
+        <g id="caps"></g>
+        <rect class="bridge" x="518" y="224" width="54" height="34" rx="4" transform="rotate(-12 545 241)"/>
+
+        <!-- walkways -->
+        <g>
+          <use href="#wc" class="walk-e"/><use href="#wm" class="walk-e"/>
+          <use href="#w0" class="walk-e"/><use href="#w1" class="walk-e"/><use href="#w2" class="walk-e"/><use href="#w3" class="walk-e"/><use href="#w4" class="walk-e"/>
+          <use href="#w5" class="walk-e"/><use href="#w6" class="walk-e"/><use href="#w7" class="walk-e"/><use href="#w8" class="walk-e"/>
+          <use href="#wc" class="walk"/><use href="#wm" class="walk"/>
+          <use href="#w0" class="walk"/><use href="#w1" class="walk"/><use href="#w2" class="walk"/><use href="#w3" class="walk"/><use href="#w4" class="walk"/>
+          <use href="#w5" class="walk"/><use href="#w6" class="walk"/><use href="#w7" class="walk"/><use href="#w8" class="walk"/>
+        </g>
+
+        <!-- rocks and trees -->
+        <path class="rock" d="M548 186 l16 -12 l20 4 l6 16 l-14 10 l-22 -2 Z"/>
+        <path class="rock" d="M520 176 l10 -10 l14 2 l4 12 l-12 8 Z"/>
+        <path class="rock" d="M196 126 l14 -10 l18 6 l2 14 l-16 8 l-16 -4 Z"/>
+        <path class="rock" d="M690 196 l12 -9 l16 3 l3 12 l-12 7 l-15 -3 Z"/>
+        <path class="rock" d="M352 470 l12 -8 l14 4 l2 11 l-12 6 l-13 -3 Z"/>
+        <g id="trees"></g>
+
+        <!-- zone signs -->
+        <text class="zone-l" x="556" y="584" data-en="THE GARDENS">IL PRATONE</text>
+        <text class="zone-l" x="556" y="604" data-en="LAWN">DEI GARDENS</text>
+        <text class="zone-s" x="556" y="621" data-en="one trial per hole">una prova per buca</text>
+        <text class="zone-l on-water" x="566" y="386">TRUMP LAKE</text>
+        <text class="zone-s on-water" x="566" y="404" data-en="two trials per hole">due prove per buca</text>
+        <text class="zone-l" x="700" y="62">MONTE DONATO</text>
+        <text class="zone-s" x="700" y="80" data-en="three trials per hole">tre prove per buca</text>
+
+        <!-- holes -->
+        <g class="hole done" data-k="h1" tabindex="0" role="button" aria-label="Buca 1, Principiante, chiusa">
+          <use href="#h1" class="edge"/><use href="#h1" class="lane"/><use href="#h1" class="hit"/>
+          <ellipse class="cup" cx="668" cy="598" rx="6" ry="4"/><line class="pole" x1="668" y1="598" x2="668" y2="562"/><path class="pen" d="M668 562 L690 568 L668 574 Z"/>
+          <circle class="badge" cx="840" cy="648" r="13"/><text class="bn" x="840" y="653.5">1</text>
+        </g>
+        <g class="hole done" data-k="h2" tabindex="0" role="button" aria-label="Buca 2, Caddie, chiusa">
+          <use href="#h2" class="edge"/><use href="#h2" class="lane"/><use href="#h2" class="hit"/>
+          <ellipse class="cup" cx="446" cy="586" rx="6" ry="4"/><line class="pole" x1="446" y1="586" x2="446" y2="550"/><path class="pen" d="M446 550 L468 556 L446 562 Z"/>
+          <circle class="badge" cx="604" cy="652" r="13"/><text class="bn" x="604" y="657.5">2</text>
+        </g>
+        <g class="hole done" data-k="h3" tabindex="0" role="button" aria-label="Buca 3, Dilettante, chiusa">
+          <use href="#h3" class="edge"/><use href="#h3" class="lane"/><use href="#h3" class="hit"/>
+          <ellipse class="cup" cx="150" cy="560" rx="6" ry="4"/><line class="pole" x1="150" y1="560" x2="150" y2="524"/><path class="pen" d="M150 524 L172 530 L150 536 Z"/>
+          <circle class="badge" cx="384" cy="640" r="13"/><text class="bn" x="384" y="645.5">3</text>
+        </g>
+        <g class="hole done" data-k="h4" tabindex="0" role="button" aria-label="Buca 4, Handicap 18, chiusa">
+          <use href="#h4" class="edge"/><use href="#h4" class="lane"/><use href="#h4" class="hit"/>
+          <ellipse class="cup" cx="262" cy="338" rx="6" ry="4"/><line class="pole" x1="262" y1="338" x2="262" y2="302"/><path class="pen" d="M262 302 L284 308 L262 314 Z"/>
+          <circle class="badge" cx="118" cy="486" r="13"/><text class="bn" x="118" y="491.5">4</text>
+        </g>
+        <g class="hole now" data-k="h5" tabindex="0" role="button" aria-label="Buca 5, Handicap 9, sei qui">
+          <use href="#h5" class="edge"/><use href="#h5" class="lane"/><use href="#h5" class="hit"/>
+          <circle class="pulse" cx="604" cy="226" r="9"/>
+          <ellipse class="cup" cx="604" cy="226" rx="6" ry="4"/><line class="pole" x1="604" y1="226" x2="604" y2="190"/><path class="pen" d="M604 190 L626 196 L604 202 Z"/>
+          <circle class="badge" cx="330" cy="250" r="13"/><text class="bn" x="330" y="255.5">5</text>
+        </g>
+        <g class="hole todo" data-k="h6" tabindex="0" role="button" aria-label="Buca 6, Scratch, da giocare">
+          <use href="#h6" class="edge"/><use href="#h6" class="lane"/><use href="#h6" class="hit"/>
+          <ellipse class="cup" cx="806" cy="452" rx="6" ry="4"/><line class="pole" x1="806" y1="452" x2="806" y2="416"/><path class="pen" d="M806 416 L828 422 L806 428 Z"/>
+          <circle class="badge" cx="760" cy="300" r="13"/><text class="bn" x="760" y="305.5">6</text>
+        </g>
+        <g class="hole todo" data-k="h7" tabindex="0" role="button" aria-label="Buca 7, Pro, da giocare">
+          <use href="#h7" class="edge"/><use href="#h7" class="lane"/><use href="#h7" class="hit"/>
+          <ellipse class="cup" cx="862" cy="100" rx="6" ry="4"/><line class="pole" x1="862" y1="100" x2="862" y2="64"/><path class="pen" d="M862 64 L884 70 L862 76 Z"/>
+          <circle class="badge" cx="982" cy="232" r="13"/><text class="bn" x="982" y="237.5">7</text>
+        </g>
+        <g class="hole todo" data-k="h8" tabindex="0" role="button" aria-label="Buca 8, Campione, da giocare">
+          <use href="#h8" class="edge"/><use href="#h8" class="lane"/><use href="#h8" class="hit"/>
+          <ellipse class="cup" cx="474" cy="112" rx="6" ry="4"/><line class="pole" x1="474" y1="112" x2="474" y2="76"/><path class="pen" d="M474 76 L496 82 L474 88 Z"/>
+          <circle class="badge" cx="782" cy="144" r="13"/><text class="bn" x="782" y="149.5">8</text>
+        </g>
+        <g class="hole todo" data-k="h9" tabindex="0" role="button" aria-label="Buca 9, Leggenda del green, da giocare">
+          <use href="#h9" class="edge"/><use href="#h9" class="lane"/><use href="#h9" class="hit"/>
+          <ellipse class="cup" cx="150" cy="74" rx="6" ry="4"/><line class="pole" x1="150" y1="74" x2="150" y2="44"/><path class="pen" d="M150 44 L172 50 L150 56 Z"/>
+          <circle class="badge" cx="384" cy="150" r="13"/><text class="bn" x="384" y="155.5">9</text>
+        </g>
+
+        <!-- Urbe Hub, dentro la U della buca 6: un pollaio tech con un pollo e un dino -->
+        <g class="spot" data-k="hub" tabindex="0" role="button" aria-label="Urbe Hub, il pollaio tech: il motore del campo" data-en-label="Urbe Hub, the tech coop: the engine of the course">
+          <defs><pattern id="wire" width="6" height="6" patternUnits="userSpaceOnUse"><path class="wire-l" d="M0 0 L6 6 M6 0 L0 6"/></pattern></defs>
+          <rect class="focus" x="724" y="318" width="130" height="112" rx="10"/>
+          <!-- the pen -->
+          <rect class="pen-floor" x="728" y="368" width="76" height="36" rx="3"/>
+          <!-- the coop: wood, a solar roof, an antenna with a light, a little screen -->
+          <rect class="wood" x="802" y="356" width="44" height="46" rx="2"/>
+          <polygon class="solar" points="796,358 824,336 852,358"/>
+          <path class="solar-l" d="M806.2 350 H841.8 M813.8 344 H834.2 M824 336 V358"/>
+          <line class="antenna" x1="824" y1="336" x2="824" y2="325"/><circle class="led" cx="824" cy="323" r="2.4"/>
+          <rect class="screen" x="830" y="364" width="11" height="8" rx="1.5"/>
+          <rect class="cup" x="814" y="380" width="12" height="22" rx="6"/>
+          <line class="ramp" x1="816" y1="401" x2="800" y2="405"/>
+          <!-- the hen, facing the dino -->
+          <g transform="translate(748 401)">
+            <line class="leg" x1="-2" y1="-5" x2="-2" y2="0"/><line class="leg" x1="1.5" y1="-5" x2="1.5" y2="0"/>
+            <polygon class="hen" points="-7,-11 -12,-18 -5,-13"/>
+            <ellipse class="hen" cx="-1" cy="-9" rx="7.5" ry="6"/>
+            <ellipse class="hen-wing" cx="-2" cy="-9" rx="4" ry="2.6"/>
+            <circle class="hen" cx="5" cy="-15" r="3.8"/>
+            <path class="comb" d="M2.6 -18 q0.6 -3 2 -1.2 q1 -2.8 2.2 -0.6 q1.6 -1.8 1.8 0.8 Z"/>
+            <polygon class="beak" points="8.6,-15.6 11.8,-14.6 8.6,-13.6"/>
+            <circle class="comb" cx="8.2" cy="-12.4" r="1.1"/>
+            <circle class="eye" cx="6" cy="-15.8" r="0.9"/>
+          </g>
+          <!-- the dino, facing the hen -->
+          <g transform="translate(786 401) scale(-1 1)">
+            <polygon class="dino" points="-13,-8 -2,-12 -2,-6"/>
+            <ellipse class="dino" cx="2" cy="-8" rx="6.5" ry="5.2"/>
+            <rect class="dino" x="4" y="-20" width="5.5" height="11" rx="2"/>
+            <rect class="dino" x="4" y="-23" width="12" height="6.5" rx="2.6"/>
+            <rect class="dino" x="7.5" y="-11.5" width="3.4" height="1.8" rx=".8"/>
+            <rect class="dino" x="-1.5" y="-4.5" width="2.6" height="4.5"/><rect class="dino" x="3.4" y="-4.5" width="2.6" height="4.5"/>
+            <circle class="eye" cx="12" cy="-20.6" r="1"/>
+          </g>
+          <!-- the wire fence in front -->
+          <rect x="728" y="394" width="76" height="10" fill="url(#wire)"/>
+          <line class="rail" x1="728" y1="394" x2="804" y2="394"/>
+          <rect class="wood" x="727" y="387" width="2.6" height="18"/><rect class="wood" x="764" y="387" width="2.6" height="18"/><rect class="wood" x="800.5" y="387" width="2.6" height="18"/>
+          <text class="lbl" x="790" y="424">Urbe Hub</text>
+        </g>
+        <!-- club house: come si gioca -->
+        <g class="spot" data-k="club" tabindex="0" role="button" aria-label="Club house: come si gioca" data-en-label="Club house: how to play">
+          <rect class="focus" x="966" y="516" width="90" height="108" rx="12"/>
+          <polygon class="roof" points="1041.4,573 1023,591.4 997,591.4 978.6,573 978.6,547 997,528.6 1023,528.6 1041.4,547"/>
+          <path class="roof-l" d="M1010 560 L1041.4 573 M1010 560 L1023 591.4 M1010 560 L997 591.4 M1010 560 L978.6 573 M1010 560 L978.6 547 M1010 560 L997 528.6 M1010 560 L1023 528.6 M1010 560 L1041.4 547"/>
+          <text class="lbl" x="1010" y="614">Club house</text>
+        </g>
+        <!-- segnapunti di Claude, in cima a Monte Donato: anche l'AI gioca -->
+        <g class="spot" data-k="ai" tabindex="0" role="button" aria-label="Segnapunti di Claude: anche Claude gioca" data-en-label="Claude’s scoreboard: Claude plays too">
+          <rect class="focus" x="50" y="92" width="78" height="80" rx="10"/>
+          <rect class="wood" x="70" y="138" width="4" height="16"/><rect class="wood" x="104" y="138" width="4" height="16"/>
+          <rect class="board" x="58" y="100" width="62" height="40" rx="4"/>
+          <text class="led-s" x="89" y="113">CLAUDE</text>
+          <text class="led" id="ailed" x="89" y="133">12/18</text>
+          <text class="lbl" x="89" y="168" data-en="Claude plays">Claude gioca</text>
+        </g>
+        <!-- totem del widget iPhone -->
+        <g class="spot" data-k="phone" tabindex="0" role="button" aria-label="Il widget sull'iPhone" data-en-label="The widget on the iPhone">
+          <rect class="focus" x="52" y="584" width="72" height="96" rx="10"/>
+          <rect class="wood" x="85" y="644" width="6" height="14"/>
+          <rect class="phone-b" x="73" y="590" width="30" height="56" rx="7"/>
+          <rect class="paper" x="76" y="595" width="24" height="46" rx="4"/>
+          <text class="phone-t" x="88" y="607">4:12</text>
+          <rect x="80" y="612" width="16" height="3.5" rx="1.75" fill="var(--done)"/>
+          <circle cx="80" cy="624" r="2" fill="#2ebf70"/><circle cx="85.5" cy="624" r="2" fill="#4d7dff"/><circle cx="91" cy="624" r="2" fill="#8fd9f5"/><circle cx="96.5" cy="624" r="2" fill="#bdbdbd"/>
+          <rect x="80" y="631" width="12" height="2.5" rx="1.25" fill="var(--todo)"/>
+          <text class="lbl" x="90" y="674" data-en="iPhone widget">Widget iPhone</text>
+        </g>
+        <!-- chiosco: cosa fare mentre Claude lavora -->
+        <g class="spot" data-k="kiosk" tabindex="0" role="button" aria-label="Chiosco: cosa fare mentre Claude lavora" data-en-label="Kiosk: what to do while Claude works">
+          <rect class="focus" x="1080" y="476" width="66" height="84" rx="10"/>
+          <rect class="wood" x="1090" y="500" width="46" height="32" rx="2"/>
+          <rect class="paper" x="1094" y="510" width="38" height="8" rx="1.5"/>
+          <path class="cone" d="M1086 500 L1092 486 H1134 L1140 500 Z"/>
+          <path class="stripe" d="M1099 486 h7 l-3 14 h-7 Z M1113 486 h7 l-1 14 h-7 Z M1127 486 h7 l1 14 h-7 Z"/>
+          <text class="lbl" x="1113" y="550" data-en="Kiosk">Chiosco</text>
+        </g>
+        <!-- bacheca: i poteri -->
+        <g class="spot" data-k="board" tabindex="0" role="button" aria-label="Bacheca dei poteri" data-en-label="Powers board">
+          <rect class="focus" x="880" y="506" width="80" height="92" rx="10"/>
+          <rect class="wood" x="903" y="546" width="4" height="22"/><rect class="wood" x="933" y="546" width="4" height="22"/>
+          <rect class="wood" x="894" y="514" width="52" height="36" rx="3"/>
+          <rect class="paper" x="899" y="519" width="42" height="26" rx="2"/>
+          <path class="ink" d="M904 526 H934 M904 532 H930 M904 538 H926"/>
+          <text class="lbl" x="920" y="588" data-en="Board">Bacheca</text>
+        </g>
+        <!-- minigolf -->
+        <text class="lbl" x="1085" y="160" style="font-size:16px;font-weight:700" data-en="Mini golf">Minigolf</text>
+        <g class="spot" data-k="pool" tabindex="0" role="button" aria-label="Biliardo, si apre a 888 buche fatte" data-en-label="Billiards, opens at 888 holes played">
+          <rect class="focus" x="1024" y="170" width="122" height="84" rx="10"/>
+          <rect class="felt" x="1034" y="178" width="102" height="52" rx="5"/>
+          <circle class="pocket" cx="1038" cy="182" r="5"/><circle class="pocket" cx="1132" cy="182" r="5"/><circle class="pocket" cx="1038" cy="226" r="5"/><circle class="pocket" cx="1132" cy="226" r="5"/><circle class="pocket" cx="1085" cy="180" r="4"/><circle class="pocket" cx="1085" cy="228" r="4"/>
+          <rect class="locked" x="1026" y="172" width="118" height="64" rx="8"/>
+          <g transform="translate(1085 204)"><path class="lock" d="M-6 -4 v-4 a6 6 0 0 1 12 0 v4" fill="none"/><rect class="lock" x="-9" y="-4" width="18" height="13" rx="2.5"/></g>
+          <text class="lbl" x="1085" y="250">Biliardo · 888</text>
+        </g>
+        <g class="spot" data-k="ice" tabindex="0" role="button" aria-label="Campo ghiacciato, si apre a 200 buche fatte" data-en-label="Ice course, opens at 200 holes played">
+          <rect class="focus" x="1024" y="262" width="122" height="88" rx="10"/>
+          <defs><linearGradient id="icefill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--ice1)"/><stop offset="1" stop-color="var(--ice2)"/></linearGradient></defs>
+          <rect class="ice" x="1034" y="272" width="102" height="54" rx="14" fill="url(#icefill)"/>
+          <path d="M1050 316 L1074 282 M1078 318 L1100 286 M1104 316 L1122 290" stroke="#ffffff" stroke-width="2" opacity=".8"/>
+          <rect class="locked" x="1026" y="266" width="118" height="66" rx="16"/>
+          <g transform="translate(1085 299)"><path class="lock" d="M-6 -4 v-4 a6 6 0 0 1 12 0 v4" fill="none"/><rect class="lock" x="-9" y="-4" width="18" height="13" rx="2.5"/></g>
+          <text class="lbl" x="1085" y="346">Ghiaccio · 200</text>
+        </g>
+        <g class="spot" data-k="prato" tabindex="0" role="button" aria-label="Minigolf, il prato di oggi" data-en-label="Mini golf, today’s lawn">
+          <rect class="focus" x="1024" y="364" width="122" height="96" rx="10"/>
+          <ellipse class="green-oval" cx="1085" cy="400" rx="52" ry="26"/>
+          <ellipse class="cup" cx="1104" cy="398" rx="5" ry="3.5"/><line class="pole" x1="1104" y1="398" x2="1104" y2="374"/><path class="pen" d="M1104 374 L1120 378 L1104 382 Z"/>
+          <circle class="ballc" cx="1062" cy="404" r="4.5"/>
+          <text class="lbl" x="1085" y="446" data-en="Lawn">Prato</text>
+        </g>
+        <!-- lavori in corso: cosa resta da costruire -->
+        <g class="spot" data-k="works" tabindex="0" role="button" aria-label="Lavori in corso: cosa resta da costruire" data-en-label="Work in progress: what’s left to build" transform="translate(0 -14)">
+          <rect class="focus" x="1060" y="52" width="94" height="94" rx="10"/>
+          <rect class="wood" x="1080" y="94" width="4" height="26"/><rect class="wood" x="1124" y="94" width="4" height="26"/>
+          <rect class="cone" x="1072" y="70" width="64" height="26" rx="3"/>
+          <path class="stripe" d="M1082 70 h10 l-10 26 h-10 Z M1102 70 h10 l-10 26 h-10 Z M1122 70 h10 l-10 26 h-10 Z"/>
+          <text class="lbl" x="1104" y="138" data-en="Work in progress">Lavori in corso</text>
+        </g>
+        <!-- tabellone all'ingresso: dove sei -->
+        <g class="spot" data-k="here" tabindex="0" role="button" aria-label="Tabellone all'ingresso: dove sei" data-en-label="Sign at the entrance: where you are">
+          <rect class="focus" x="1094" y="600" width="70" height="80" rx="10"/>
+          <rect class="wood" x="1112" y="640" width="4" height="22"/><rect class="wood" x="1140" y="640" width="4" height="22"/>
+          <rect class="wood" x="1102" y="608" width="52" height="36" rx="3"/>
+          <rect class="paper" x="1107" y="613" width="42" height="26" rx="2"/>
+          <circle cx="1128" cy="626" r="5" fill="var(--flag)"/>
+          <text class="lbl" x="1128" y="676" data-en="Where you are">Dove sei</text>
+        </g>
+        <text class="lbl" x="1060" y="712" style="font-size:13px" data-en="Entrance">Ingresso</text>
+
+        <!-- the walk so far and the ball -->
+        <path class="trail" id="trail"/>
+        <g id="ball" transform="translate(1060 716)" tabindex="0" role="button" aria-label="Il monopattino: cliccalo 1, 2, 3 o 5 volte per un trick" data-en-label="The scooter: click it 1, 2, 3 or 5 times for a trick">
+          <ellipse class="tree-s" cx="1" cy="6" rx="18" ry="3.5"/>
+          <g id="trick">
+            <g id="scooter">
+              <g id="speed" opacity="0"><path class="speed" d="M-18 -16 H-34 M-20 -9 H-42 M-18 -2 H-32"/></g>
+              <line class="sc-stem" x1="11" y1="-2" x2="6" y2="-27"/>
+              <line class="sc-stem" x1="1" y1="-27.5" x2="11" y2="-28.5"/>
+              <rect class="sc-deck" x="-13" y="-5" width="24" height="5" rx="2.5"/>
+              <circle class="sc-wheel" cx="-10" cy="1" r="5"/><circle class="sc-hub" cx="-10" cy="1" r="1.6"/>
+              <circle class="sc-wheel" cx="12" cy="1" r="5"/><circle class="sc-hub" cx="12" cy="1" r="1.6"/>
+            </g>
+          </g>
+          <circle class="sc-hit" cx="0" cy="-12" r="22"/>
+          <g id="balltag" opacity="0"><rect class="tag-bg" id="tagbg" x="-36" y="-60" width="72" height="20" rx="10"/><text class="tag-t" id="tagt" x="0" y="-45.5">SEI QUI</text></g>
+        </g>
+      </svg>
+      <div class="pop" id="pop" hidden role="dialog" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <p class="hint"><span data-en-html="<b>Hover over</b> a hole or a building, or tap it: the explanation opens."><b>Passa sopra</b> una buca o un edificio, o toccalo: si apre la spiegazione.</span><span data-en="Solid green: hole done. Waving flag: you’re here. Grey: still to play.">Verde pieno: buca chiusa. Bandiera che sventola: sei qui. Grigio: da giocare.</span><span data-en-html="Try clicking the scooter, even several times, Trump Lake and the bushes. For the easter eggs, message <a href=&quot;https://t.me/yakonft&quot; target=&quot;_blank&quot; rel=&quot;noopener&quot;>@yakonft</a> on Telegram.">Prova a cliccare il monopattino, anche più volte, Trump Lake e i cespugli. Per gli easter egg scrivi su Telegram a <a href="https://t.me/yakonft" target="_blank" rel="noopener">@yakonft</a>.</span><span id="secrets" hidden></span></p>
+  <footer id="foot" data-en-html="Numbers from task-eta’s index, <span id=&quot;at&quot;>October 24 at 4:44 PM</span>. The full project is in <code>docs/gioco-progressione.md</code>; the <code>/tasketa-gioco</code> skill updates this map.">Numeri dall'indice di task-eta, <span id="at">24 ottobre alle 16:44</span>. Il progetto completo è in <code>docs/gioco-progressione.md</code>; la skill <code>/tasketa-gioco</code> aggiorna questa mappa.</footer>
+</main>
+
+<script>
+(function () {
+  // ← I numeri della mappa: aggiornali con references/dove-sono.py --json della skill tasketa-gioco.
+  // Dentro TaskETA arrivano dall'app in window.CAMPO_DATA, con la stessa forma (Campo.swift).
+  var DATA = window.CAMPO_DATA || {
+    at: T('October 24 at 4:44 PM', '24 ottobre alle 16:44'), mood: 'minigolf',
+    points: 27975, played: 158, title: 'Handicap 18', streak: 1, best: 14,
+    round: { n: 6, holes: 13, toPar: '−6' },
+    nowHole: 5, prevGreen: 20000,
+    holes: [
+      { n: 1, t: T('Beginner', 'Principiante'), z: T('The Gardens Lawn', 'Il Pratone dei Gardens'), g: 0, s: 'done',
+        tr: [['ok', T('Finish your first 18-hole round', 'Chiudi il primo giro da 18 buche'), T('8 rounds finished', '8 giri chiusi')]],
+        pw: ['Fairway', 'widget', 'old', T('The iPhone widget in lawn green. Today you win it at 10,000 points.', "Il widget dell'iPhone in verde prato. Oggi si vince a 10.000 punti.")] },
+      { n: 2, t: 'Caddie', z: T('The Gardens Lawn', 'Il Pratone dei Gardens'), g: 4000, s: 'done',
+        tr: [['ok', T('5 good holes in a row', '5 buche buone di fila'), T('the record is 14', 'il record è 14')]],
+        pw: [T('The caddie’s tip', 'Il consiglio del caddie'), T('help', 'aiuto'), 'new', T('At every new round, a line of advice in the panel and in the widget: “if it takes more than 3 tools, ask for medium”.', 'A ogni nuovo giro, una riga di consiglio nel pannello e nel widget: «se servono più di 3 strumenti, chiedi medium».')] },
+      { n: 3, t: T('Amateur', 'Dilettante'), z: T('The Gardens Lawn', 'Il Pratone dei Gardens'), g: 10000, s: 'done',
+        tr: [['ok', T('Win a challenge of the round', 'Vinci una sfida del giro'), T('3 challenges won in 8 rounds', '3 sfide vinte su 8 giri')]],
+        pw: ['Mulligan', T('estimates', 'stime'), 'new', T('Once a day the first bogey doesn’t break the streak. It kicks in by itself, if the streak is at least 3.', 'Una volta al giorno il primo bogey non rompe la serie. Si usa da solo, se la serie è almeno di 3.')] },
+      { n: 4, t: 'Handicap 18', z: 'Trump Lake', g: 20000, s: 'done',
+        tr: [['ok', T('10 good holes in a row', '10 buche buone di fila'), T('the record is 14', 'il record è 14')], ['ok', T('A round with 3 bogeys or fewer', 'Un giro con 3 bogey o meno'), T('the best has 2', 'il migliore ne ha 2')]],
+        pw: [T('Power club', 'Mazza forte'), T('mini golf', 'minigolf'), 'new', T('In the mini golf, longer shots and more cushions, on lawn, ice and billiards.', 'Nel minigolf tiri più lunghi e più sponde, su prato, ghiaccio e biliardo.')] },
+      { n: 5, t: 'Handicap 9', z: 'Trump Lake', g: 40000, s: 'now',
+        tr: [['part', T('3 days in a row at 70%', '3 giorni di fila al 70%'), T('2 of 3: 10/23 73%, today 75%', '2 di 3: 23/10 73%, oggi 75%')], ['no', T('A round with no bogeys on quick tasks', 'Un giro senza bogey sui quick'), T('the best has 1', 'il migliore ne ha 1')]],
+        pw: [T('Night golf', 'Golf di notte'), 'widget', 'old', T('The night widget.', 'Il widget notturno.')] },
+      { n: 6, t: 'Scratch', z: 'Trump Lake', g: 75000, s: 'todo',
+        tr: [['no', T('15 good holes in a row', '15 buche buone di fila'), T('the record is 14', 'il record è 14')], ['no', T('A round with no disasters', 'Un giro senza disastri'), T('the best has 1', 'il migliore ne ha 1')]],
+        pw: [T('Double hole', 'Buca doppia'), T('estimates', 'stime'), 'new', T('In every round one hole counts double, and you know which from the start.', 'In ogni giro una buca vale doppio, e sai quale dall\'inizio.')] },
+      { n: 7, t: 'Pro', z: 'Monte Donato', g: 125000, s: 'todo',
+        tr: [['no', T('20 good holes in a row', '20 buche buone di fila'), T('the record is 14', 'il record è 14')], ['no', T('5 days in a row at 70%', '5 giorni di fila al 70%'), T('2 of 5', '2 di 5')], ['no', T('A round with 1 bogey or fewer', 'Un giro con 1 bogey o meno'), T('the best has 2', 'il migliore ne ha 2')]],
+        pw: [T('Trophy', 'Trofeo'), 'widget', 'old', T('The gold widget.', 'Il widget oro.')] },
+      { n: 8, t: T('Champion', 'Campione'), z: 'Monte Donato', g: 200000, s: 'todo',
+        tr: [['no', T('10 good holes in a row on medium tasks', '10 buche buone di fila sui medium'), T('the record is 5', 'il record è 5')], ['no', T('A round at −15 or better', 'Un giro a −15 o meglio'), T('the best is −13', 'il migliore è −13')], ['no', T('2 rounds in a row with no disasters', '2 giri di fila senza disastri'), '']],
+        pw: ['Eagle', T('estimates', 'stime'), 'new', T('A spot-on estimate on a medium or long task is worth 500 points instead of 300.', 'Una stima centrata su un task medium o long vale 500 punti invece di 300.')] },
+      { n: 9, t: T('Legend of the green', 'Leggenda del green'), z: 'Monte Donato', g: 300000, s: 'todo',
+        tr: [['no', T('25 good holes in a row', '25 buche buone di fila'), T('the record is 14', 'il record è 14')], ['no', T('A round with no bogeys', 'Un giro senza bogey'), T('the best has 2', 'il migliore ne ha 2')], ['no', T('20 days at 70% in a month', '20 giorni al 70% in un mese'), T('2 so far', 'per ora 2')]],
+        pw: [T('Green jacket', 'Giacca verde'), T('look', 'aspetto'), 'new', T('The whole app in green and gold, the season board, and Season 2 opens.', "Tutta l'app in verde e oro, la bacheca della stagione, e si apre la Stagione 2.")] }
+    ],
+    ice: 200, pool: 888,
+    clean: 63, doom: T('10 minutes in 32 games this week', '10 minuti in 32 partite questa settimana'), restart: 36,
+    phone: { synced: T('at 5:13 PM', 'alle 17:13'), note: T('The small changes from 5:17 PM arrive on their own with the next installed build.', 'Le piccole modifiche delle 17:17 arrivano da sole alla prossima build installata.') },
+    ai: { inside: 12, hit: 8, short: 5, long: 1, run: 4, bestRun: 9, best: 15, share: 62, shortAll: 26, longAll: 12, trend: T('from 55% to 69%', 'dal 55% al 69%') }
+  };
+
+  // The game's mood (GameMood.swift in the app): the same results named as on a golf score card, or as gems.
+  var M = DATA.mood === 'gemme'
+    ? { good: T('gem', 'gemma'), goods: T('gems', 'gemme'), bad: T('a pebble', 'sasso'), fast: T('the sapphire', 'lo zaffiro'),
+        rows: [[T('Diamond', 'Diamante'), T('spot on', 'stima centrata'), 300], [T('Sapphire', 'Zaffiro'), T('faster', 'più veloce'), 150], [T('Emerald', 'Smeraldo'), T('in range', 'dentro la forchetta'), 100], [T('Pebble', 'Sasso'), T('over the range', 'oltre la forchetta'), 0]] }
+    : { good: T('good hole', 'buca buona'), goods: T('good holes', 'buche buone'), bad: T('a bogey', 'bogey'), fast: T('the birdie', 'il birdie'),
+        rows: [['Hole in one', T('spot on', 'stima centrata'), 300], ['Birdie', T('faster', 'più veloce'), 150], ['Par', T('in range', 'dentro la forchetta'), 100], ['Bogey', T('over the range', 'oltre la forchetta'), 0]] };
+
+  var wrap = document.getElementById('wrap');
+  var svg = document.getElementById('park');
+  var pop = document.getElementById('pop');
+  var NS = 'http://www.w3.org/2000/svg';
+  // The static texts in English (the markup holds the Italian): before anything below reads them.
+  if (LANG !== 'it') {
+    Array.prototype.forEach.call(document.querySelectorAll('[data-en]'), function (e) { e.textContent = e.getAttribute('data-en'); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-en-html]'), function (e) { e.innerHTML = e.getAttribute('data-en-html'); });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-en-label]'), function (e) { e.setAttribute('aria-label', e.getAttribute('data-en-label')); });
+  }
+  function n(x) { return x.toLocaleString(T('en-US', 'it-IT')); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  var cur = DATA.holes[DATA.nowHole - 1];
+  var share = cur.g > DATA.prevGreen ? Math.max(0, Math.min(1, (DATA.points - DATA.prevGreen) / (cur.g - DATA.prevGreen))) : 1;
+
+  // Everything that changes comes from DATA: holes' state, the flag that waves, locks, header, time.
+  var label = { done: T('done', 'chiusa'), now: T('you’re here', 'sei qui'), todo: T('to play', 'da giocare') };
+  DATA.holes.forEach(function (h) {
+    var g = svg.querySelector('[data-k=h' + h.n + ']');
+    g.setAttribute('class', 'hole ' + h.s);
+    g.setAttribute('aria-label', T('Hole ', 'Buca ') + h.n + ', ' + h.t + ', ' + label[h.s]);
+    var old = g.querySelector('.pulse'); if (old) old.remove();
+    if (h.s === 'now') {
+      var c = g.querySelector('.cup'), p = document.createElementNS(NS, 'circle');
+      p.setAttribute('class', 'pulse'); p.setAttribute('cx', c.getAttribute('cx')); p.setAttribute('cy', c.getAttribute('cy')); p.setAttribute('r', 9);
+      g.insertBefore(p, c);
+    }
+  });
+  // The mini golf fields: an open one loses its lock; a closed one shows how far you are, counted from
+  // the first hole (not from the field before), on its label and on a bar under it.
+  [['ice', DATA.ice, T('Ice', 'Ghiaccio')], ['pool', DATA.pool, T('Billiards', 'Biliardo')]].forEach(function (m) {
+    var tile = svg.querySelector('[data-k=' + m[0] + ']'), lbl = tile.querySelector('.lbl'), won = DATA.played >= m[1];
+    lbl.textContent = m[2] + ' · ' + (won ? T('open', 'aperto') : DATA.played + '/' + m[1]);
+    if (won) { Array.prototype.forEach.call(tile.querySelectorAll('.locked, .lock'), function (e) { e.style.display = 'none'; }); return; }
+    var y = +lbl.getAttribute('y') + 6;
+    tile.insertAdjacentHTML('beforeend', '<rect class="mbar" x="1040" y="' + y + '" width="90" height="4" rx="2"/>' +
+      '<rect class="mbar-f" x="1040" y="' + y + '" width="' + (90 * DATA.played / m[1]).toFixed(1) + '" height="4" rx="2"/>');
+  });
+  var owned = DATA.holes.filter(function (h) { return h.s === 'done'; }).length;
+  document.getElementById('chips').innerHTML = '<span class="here">' + T('Hole ', 'Buca ') + cur.n + '</span><span>' + esc(DATA.title) + '</span><span>' + n(DATA.points) + T(' points', ' punti') + '</span><span>' + DATA.played + T(DATA.played === 1 ? ' hole played' : ' holes played', ' buche fatte') + '</span><span>' + owned + T(owned === 1 ? ' power' : ' powers', ' poteri') + '</span>';
+  document.getElementById('at').textContent = DATA.at;
+  // In the app the footer is hidden: the time of the numbers goes at the end of the hint.
+  if (DATA.embed) document.querySelector('.hint').insertAdjacentHTML('beforeend', '<span>' + T('Numbers ', 'Numeri ') + esc(DATA.atShort || DATA.at) + '.</span>');
+  document.getElementById('ailed').textContent = DATA.ai.inside + '/18';
+
+  // Bushes, placed where no fairway passes. Each hides a secret: a click shakes it, the find pops out
+  // and its card opens. What you found stays in this browser; nothing moves until you click.
+  var trees = [[330, 540, 15], [520, 540, 17], [760, 556, 15], [380, 418, 18], [220, 250, 16], [470, 186, 13],
+    [860, 206, 16], [60, 420, 14], [940, 618, 14], [80, 210, 24], [640, 520, 12], [300, 410, 12]];
+  // ← one secret per bush, in the same order: title, card text, what pops out (a key of LOOT).
+  var SECRETS = [
+    [T("Lost ball", "Pallina persa"), T("It ended up on the Gardens Lawn. It says “Dino” on it: it goes back to Urbe Hub.", "Finita nel Pratone dei Gardens. Sopra c'è scritto «Dino»: va riportata all'Urbe Hub."), "ball"],
+    ["You can't see me", T("John Cena is in this bush. You can’t see him, and that’s how it should be.", "In questo cespuglio c'è John Cena. Non lo vedi, ed è giusto così."), "none"],
+    [T("The runaway chicken", "Il pollo evaso"), T("It escaped from Urbe Hub. The dino says it’ll be back for dinner.", "È scappato dall'Urbe Hub. Il dino dice che torna per cena."), "hen"],
+    [T("A dry cap", "Un cappellino asciutto"), T("It got away from Trump Lake before getting wet. The first dry cap on the course.", "Scappato da Trump Lake prima di bagnarsi. Il primo cappellino asciutto del campo."), "cap"],
+    [T("The dino peeks out", "Il dino fa capolino"), T("“Give it time, nobody’s paying me for this.” Then it goes back in.", "«Dai tempo al tempo, che nessuno mi sta pagando.» Poi torna dentro."), "dino"],
+    [T("A Stone Pickaxe", "Un piccone di pietra"), T("Wrong game: this goes in the Mine. Someone on Monte Donato dug too deep.", "Gioco sbagliato: questo va nella miniera. Qualcuno su Monte Donato ha scavato troppo."), "pick"],
+    [T("A suspicious scorecard", "Una scorecard sospetta"), T("18 holes in one in a row, and the handwriting is yours. The caddie won’t sign it.", "18 hole in one di fila, e la calligrafia è la tua. Il caddie non firma."), "card"],
+    [T("The Lawn hedgehog", "Il riccio del Pratone"), T("It pricks, but it brings luck: the next bogey hurts less. It’s not true, but it helps.", "Punge, ma porta fortuna: il prossimo bogey fa meno male. Non è vero, ma consola."), "hog"],
+    [T("A coffee voucher", "Un buono per un caffè"), T("Valid at the kiosk, only while Claude works. It expires when the task ends.", "Valido al chiosco, solo mentre Claude lavora. Scade quando finisce il task."), "ticket"],
+    [T("Claude’s note", "Il foglietto di Claude"), T("In pencil: “2 minutes, tops”. Below, in pen: “9”. Claude plays too, and sometimes makes a bogey.", "A matita: «ci metto 2 minuti». Sotto, a penna: «9». Anche Claude gioca, e a volte fa bogey."), "note"],
+    [T("A paper plane", "Un aereo di carta"), T("It’s for <a href=\"https://t.me/yakonft\" target=\"_blank\" rel=\"noopener\">@yakonft</a>: tell him what you found in the bushes.", "È per <a href=\"https://t.me/yakonft\" target=\"_blank\" rel=\"noopener\">@yakonft</a>: scrivigli cosa hai trovato nei cespugli."), "plane"],
+    [T("A golden tee", "Un tee d'oro"), T("It gives no points and turns on no powers. It just looks good, and that’s enough.", "Non dà punti e non accende poteri. Fa solo scena, ed è abbastanza."), "tee"]
+  ];
+  var LOOT = {
+    none: '',
+    ball: '<circle class="ballc" r="5"/>',
+    hen: '<ellipse class="hen" cx="-1" cy="0" rx="7.5" ry="6"/><circle class="hen" cx="5" cy="-6" r="3.8"/><path class="comb" d="M2.6 -9 q0.6 -3 2 -1.2 q1 -2.8 2.2 -0.6 q1.6 -1.8 1.8 0.8 Z"/><polygon class="beak" points="8.6,-6.6 11.8,-5.6 8.6,-4.6"/><circle class="eye" cx="6" cy="-6.8" r="0.9"/>',
+    cap: '<path class="cap" d="M-9 1 C-9 -9 9 -9 9 1 Z"/><path class="cap-brim" d="M7 0 C12 -1 17 0 19 2 C15 3.5 10 3 7 2.6 Z"/><circle class="cap" cx="0" cy="-6.8" r="1.4"/>',
+    dino: '<rect class="dino" x="-4" y="-5" width="5.5" height="11" rx="2"/><rect class="dino" x="-4" y="-9" width="12" height="6.5" rx="2.6"/><circle class="eye" cx="4" cy="-6.6" r="1"/>',
+    pick: '<line class="pick-s" x1="-8" y1="9" x2="5" y2="-5"/><path class="pick-h" d="M-4 -10 Q5 -11 12 -3 L10 -1 Q4 -7 -4 -7 Z"/>',
+    card: '<rect class="paper loot-edge" x="-9" y="-11" width="18" height="22" rx="2"/><path class="ink" d="M-6 -5 H6 M-6 0 H6 M-6 5 H6 M-1 -9 V9"/>',
+    hog: '<path class="spike" d="M-10 3 L-9 -3 L-6 -1 L-5 -8 L-2 -3 L0 -9 L2 -3 L5 -7 L6 -1 L9 1 Z"/><ellipse class="spike" cx="0" cy="2" rx="9" ry="4.5"/><circle class="eye" cx="7" cy="1" r="1"/>',
+    ticket: '<rect class="paper loot-edge" x="-10" y="-6" width="20" height="12" rx="1.5"/><path class="ink" d="M-6 -2 H6 M-6 2 H2"/><circle class="cone" cx="10" cy="0" r="2"/><circle class="cone" cx="-10" cy="0" r="2"/>',
+    note: '<rect class="paper loot-edge" x="-8" y="-10" width="16" height="20" rx="1.5"/><path class="ink" d="M-5 -5 H5 M-5 0 H4 M-5 5 H2"/>',
+    plane: '<path class="plane" d="M-11 2 L11 -8 L3 8 L0 3 Z M0 3 L11 -8"/>',
+    tee: '<path class="gold" d="M-7 -6 H7 L2 -2 V9 H-2 V-2 Z"/>'
+  };
+  var found = {};
+  try { found = JSON.parse(localStorage.getItem('campo-cespugli') || '{}') || {}; } catch (e) { found = {}; }
+  var secretsEl = document.getElementById('secrets');
+  function countFound() {
+    var c = SECRETS.filter(function (s, i) { return found[i]; }).length;
+    secretsEl.hidden = !c;
+    secretsEl.textContent = T('Secrets in the bushes: ', 'Segreti nei cespugli: ') + c + T(' of ', ' di ') + SECRETS.length + '.';
+    return c;
+  }
+  countFound();
+  function secretCard(i, c) {
+    return '<div class="row"><span class="eyebrow">' + T('Bush · secret', 'Cespuglio · segreto') + '</span><span class="state done">' + c + T(' of ', ' di ') + SECRETS.length + '</span></div>' +
+      '<h3>' + SECRETS[i][0] + '</h3><p>' + SECRETS[i][1] + '</p>' +
+      (c === SECRETS.length ? '<p class="small"><b>' + T('All ', 'Tutti e ') + SECRETS.length + '.</b> ' + T('The course has no secrets left. Almost.', 'Il campo non ha più segreti. Quasi.') + '</p>' : '<p class="small">' + T('The others are in the other bushes.', 'Gli altri stanno negli altri cespugli.') + '</p>');
+  }
+  var tg = document.getElementById('trees');
+  trees.forEach(function (t, i) {
+    var g = document.createElementNS(NS, 'g'); g.setAttribute('class', 'bush');
+    var s = document.createElementNS(NS, 'ellipse'); s.setAttribute('class', 'tree-s');
+    s.setAttribute('cx', t[0] + 3); s.setAttribute('cy', t[1] + t[2] * 0.55); s.setAttribute('rx', t[2]); s.setAttribute('ry', t[2] * 0.45);
+    var c = document.createElementNS(NS, 'circle'); c.setAttribute('class', 'tree'); c.setAttribute('cx', t[0]); c.setAttribute('cy', t[1]); c.setAttribute('r', t[2]);
+    var h = document.createElementNS(NS, 'circle'); h.setAttribute('class', 'tree-h'); h.setAttribute('cx', t[0] - t[2] * 0.3); h.setAttribute('cy', t[1] - t[2] * 0.3); h.setAttribute('r', t[2] * 0.5);
+    g.append(s, c, h);
+    g.addEventListener('click', function (e) {
+      e.stopPropagation();
+      g.classList.remove('shake'); g.getBoundingClientRect(); g.classList.add('shake');
+      found[i] = 1;
+      try { localStorage.setItem('campo-cespugli', JSON.stringify(found)); } catch (err) {}
+      var l = document.createElementNS(NS, 'g');
+      l.setAttribute('transform', 'translate(' + t[0] + ' ' + (t[1] - t[2]) + ')');
+      l.innerHTML = '<g class="loot">' + LOOT[SECRETS[i][2]] + '</g>';
+      svg.appendChild(l);
+      setTimeout(function () { l.remove(); }, 2700);
+      pinned = true;
+      open(g, secretCard(i, countFound()));
+    });
+    tg.appendChild(g);
+  });
+
+  // The cards.
+  function trialList(tr) {
+    return '<ul class="trials">' + tr.map(function (t) {
+      return '<li class="' + t[0] + '"><span class="tick"></span><span>' + esc(t[1]) + '</span>' + (t[2] ? '<span class="p">' + esc(t[2]) + '</span>' : '') + '</li>';
+    }).join('') + '</ul>';
+  }
+  function powerBlock(pw) {
+    return '<div class="power"><span class="pk">' + T('Power · ', 'Potere · ') + pw[1] + '</span><span><b>' + esc(pw[0]) + '</b><span class="tag ' + pw[2] + '">' + (pw[2] === 'new' ? T('new', 'nuovo') : T('existing', "c'è già")) + '</span></span><p>' + esc(pw[3]) + '</p></div>';
+  }
+  var stateName = label;
+  function holeCard(h) {
+    var green = h.s === 'now'
+      ? '<p class="small">' + T('Green at ', 'Green a ') + n(h.g) + T(' points · you have ', ' punti · ne hai ') + n(DATA.points) + T(', ', ', ne mancano ') + n(h.g - DATA.points) + T(' to go', '') + '</p><div class="bar"><i style="width:' + (share * 100).toFixed(1) + '%"></i></div>'
+      : '<p class="small">' + T('Green at ', 'Green a ') + n(h.g) + T(' points', ' punti') + '</p>';
+    return '<div class="row"><span class="eyebrow">' + T('Hole ', 'Buca ') + h.n + ' · ' + h.z + '</span><span class="state ' + h.s + '">' + stateName[h.s] + '</span></div>' +
+      '<h3>' + esc(h.t) + '</h3>' + green + trialList(h.tr) + powerBlock(h.pw);
+  }
+  function course(name, at, desc, params, open) {
+    var bar = open ? '<p class="small">' + T('Open', 'Aperto') + '</p>'
+      : '<p class="small">' + T('Opens at ', 'Si apre a ') + at + T(' holes played · you’re at ', ' buche fatte · sei a ') + DATA.played + T(', ', ', ne mancano ') + Math.max(0, at - DATA.played) + T(' to go', '') + '</p><div class="bar"><i style="width:' + Math.min(100, DATA.played / at * 100).toFixed(1) + '%"></i></div>';
+    return '<div class="row"><span class="eyebrow">' + T('Mini golf', 'Minigolf') + '</span><span class="state ' + (open ? 'done' : 'todo') + '">' + (open ? T('open', 'aperto') : T('closed', 'chiuso')) + '</span></div><h3>' + name + '</h3>' + bar + '<p>' + desc + '</p><p class="params">' + params + '</p>';
+  }
+  var CARDS = {
+    ai: function () {
+      var a = DATA.ai;
+      return '<div class="row"><span class="eyebrow">' + T('Claude’s scoreboard', 'Segnapunti di Claude') + '</span><span class="tag new" style="margin:0">' + T('new', 'nuovo') + '</span></div><h3>' + T('Claude plays too', 'Anche Claude gioca') + '</h3>' +
+        '<p>' + T('The game scores Claude’s estimates too: it’s a player as well. One extra line in the hook shows it its score at every prompt, like a scoreboard.', 'Il gioco dà un voto alle stime di Claude: il giocatore è anche lui. Una riga in più nell\'hook gli fa vedere il suo punteggio a ogni prompt, come un tabellone.') + '</p>' +
+        '<dl class="kv"><dt>' + T('Last 18', 'Ultime 18') + '</dt><dd>' + a.inside + T(' in range (', ' dentro la forchetta (') + a.hit + T(' spot on), ', ' centrate), ') + a.short + T(' too short, ', a.short === 1 ? ' troppo corta, ' : ' troppo corte, ') + a.long + T(' too long', a.long === 1 ? ' troppo lunga' : ' troppo lunghe') + '</dd>' +
+        '<dt>' + T('Best', 'Record') + '</dt><dd>' + a.best + T(' of 18; streak ', ' su 18; serie ') + a.run + T(', best ', ', record ') + a.bestRun + '</dd>' +
+        '<dt>' + T('Overall', 'In tutto') + '</dt><dd>' + a.share + T('% in range, ', '% dentro, ') + a.shortAll + T('% short, ', '% corte, ') + a.longAll + T('% long', '% lunghe') + '</dd>' +
+        '<dt>' + T('Trend', 'Andamento') + '</dt><dd>' + a.trend + T(' in range, first half to second half', ' dentro, prima e seconda metà') + '</dd></dl>' +
+        '<p class="small">' + T('For Claude even ', 'Per Claude anche ') + M.fast + T(' is a miss: an estimate that was too cautious. The range is the hook’s, and it measures the estimate, not the work. It costs one line per prompt, on by default: <code>task_eta.py score off</code> turns it off.', ' è un errore: una stima troppo prudente. La forchetta è quella dell\'hook, e si misura la stima, non il lavoro. Costa una riga a prompt, accesa di base: <code>task_eta.py score off</code> la spegne.') + '</p>';
+    },
+    phone: function () {
+      return '<div class="row"><span class="eyebrow">' + T('iPhone widget', 'Widget iPhone') + '</span><span class="state done">' + T('existing', 'c\'è già') + '</span></div><h3>' + T('TaskETA on the iPhone', 'TaskETA sull\'iPhone') + '</h3>' +
+        '<p>' + T('A Scriptable script that asks the Mac for the data, on the same Wi-Fi. The Mac keeps it up to date by itself in iCloud Drive: it checks every minute and rewrites it when there’s a new build.', 'Uno script di Scriptable che chiede i dati al Mac, sulla stessa Wi-Fi. Il Mac lo tiene aggiornato da solo in iCloud Drive: controlla ogni minuto e lo riscrive quando c\'è una build nuova.') + '</p>' +
+        T('<ul class="list"><li><b>Home Screen</b>: the sessions as bars, as in the Mac’s panel. First the ones that need you, then the ones running.</li>',
+          '<ul class="list"><li><b>Home</b>: le sessioni come barre, come nel pannello del Mac. Prima chi ti aspetta, poi chi gira.</li>') +
+        T('<li><b>Lock Screen</b>: the time first of all.</li><li><b>Away from home</b>: the latest data, in grey.</li></ul>',
+          '<li><b>Blocco schermo</b>: il tempo prima di tutto.</li><li><b>Fuori casa</b>: gli ultimi dati, in grigio.</li></ul>') +
+        '<p>' + T('The game stays on the Mac: the iPhone only gets the styles you’ve won, picked with one click in the dashboard, no Parameter.', 'Il gioco resta sul Mac: all\'iPhone arrivano solo gli stili vinti, scelti con un clic nella dashboard, senza Parameter.') + '</p>' +
+        '<p class="small">' + (DATA.phone.synced ? T('Updated ', 'Aggiornato ') + DATA.phone.synced + T(' with the installed app. ', ' con l\'app installata. ') : '') + DATA.phone.note + '</p>';
+    },
+    kiosk: function () {
+      return '<span class="eyebrow">' + T('Kiosk · while Claude works', 'Chiosco · mentre Claude lavora') + '</span><h3>' + T('What to do while you wait', 'Cosa fare mentre aspetti') + '</h3>' +
+        '<p class="small">' + T('As soon as the estimate arrives, the panel shows a single line with what to do.', 'Appena arriva la stima, nel pannello compare una riga sola con cosa fare.') + '</p>' +
+        T('<table class="gtab"><tr><td>under 1 minute</td><td>nothing, it’s done first</td></tr><tr><td>1–5 minutes</td><td>a hole, or the 30 s tip</td></tr>',
+          '<table class="gtab"><tr><td>meno di 1 minuto</td><td>niente, arriva prima</td></tr><tr><td>1–5 minuti</td><td>una buca, o il consiglio da 30 s</td></tr>') +
+        T('<tr><td>5–15 minutes</td><td>get the next prompt ready</td></tr><tr><td>over 15 minutes</td><td>the long walk, it’ll call you</td></tr></table>',
+          '<tr><td>5–15 minuti</td><td>prepara il prossimo prompt</td></tr><tr><td>oltre 15 minuti</td><td>il giro lungo, poi ti chiama</td></tr></table>') +
+        '<p>' + T('Long waits are a third of the holes, but 82% of the time spent waiting: that’s where it’s decided whether you stay at the Mac.', 'Le attese lunghe sono un terzo delle buche, ma l\'82% del tempo passato ad aspettare: lì si decide se resti al Mac.') + '</p>' +
+        '<dl class="kv"><dt>' + T('Doomscrolling avoided', 'Doomscrolling evitato') + '</dt><dd>' + DATA.doom + '</dd><dt>' + T('Ready to restart', 'Ripartenza pronta') + '</dt><dd>' + DATA.restart + T('% of prompts within a minute of the end', '% dei prompt entro un minuto dalla fine') + '</dd></dl>';
+    },
+    hub: function () {
+      return '<span class="eyebrow">' + T('Urbe Hub · the tech coop', 'Urbe Hub · il pollaio tech') + '</span><h3>' + T('The engine of the course', 'Il motore del campo') + '</h3>' +
+        '<p class="small">' + T('A chicken and a dino live here, under a roof of solar panels.', 'Ci abitano un pollo e un dino, sotto un tetto di pannelli solari.') + '</p>' +
+        '<p>' + T('The estimates come from task-eta, the tool by Dino, of Urbe.eth: it measures how long tasks take and learns from your times. Yako, the Starcks version, builds the game on top of it.', 'Le stime vengono da task-eta, lo strumento di Dino, di Urbe.eth: misura quanto durano i task e impara dai tuoi tempi. Yako, la versione di Starcks, ci costruisce sopra il gioco.') + '</p>' +
+        '<p class="small">' + T('Every Monday at 9 an outside analyst reads only the numbers and writes the weekly analysis: you’ll find it in the dashboard.', 'Ogni lunedì alle 9 un analista esterno legge solo i numeri e scrive l\'analisi della settimana: la trovi nella dashboard.') + '</p>';
+    },
+    club: function () {
+      return '<span class="eyebrow">Club house</span><h3>' + T('How to play', 'Come si gioca') + '</h3>' +
+        '<ol class="list">' + T('<li><b>Points</b>: every hole gives points, as it does today, and takes you to the green.</li><li><b>Trials</b>: 1, 2 or 3 per hole. You clear them by playing well, not by playing a lot.</li><li><b>Power</b>: every hole you close turns one on, by itself.</li><li><b>Holes played</b>: every task with an estimate, even a bogey. They open the mini golf courses.</li><li><b>Clean shot</b> (+25): a single turn, nothing added halfway, and the task stays its kind. In your data it ends in ',
+          '<li><b>Punti</b>: ogni buca dà punti, come oggi, e ti porta al green.</li><li><b>Prove</b>: 1, 2 o 3 per buca. Si chiudono giocando bene, non giocando tanto.</li><li><b>Potere</b>: ogni buca chiusa ne accende uno, da solo.</li><li><b>Buche fatte</b>: ogni task con la stima, anche un bogey. Aprono i campi del minigolf.</li><li><b>Colpo pulito</b> (+25): un turno solo, senza aggiunte a metà, e il task resta del suo tipo. Nei tuoi dati finisce in ') + M.bad + T(' 1 time in 10, the others 1 in 2.', ' 1 volta su 10, gli altri 1 su 2.') + '</li></ol>' +
+        '<table class="gtab">' + M.rows.map(function (r) { return '<tr><td>' + r[0] + ' · ' + r[1] + '</td><td>' + r[2] + '</td></tr>'; }).join('') + '</table>' +
+        '<p class="small">' + T('+25 for each ', '+25 per ogni ') + M.good + T(' in a row before it, up to +250. Disaster: over 5 times the estimate. At 70%: a day with at least 70% ', ' di fila prima, fino a +250. Disastro: oltre 5 volte la stima. Al 70%: una giornata con almeno il 70% di ') + M.goods + '.</p>' +
+        '<p>' + T('<b>Every result says why.</b> For example: “Pebble: it stopped and restarted 3 times, the estimate was for a single turn. Write everything at the start, send the rest later.”', '<b>Ogni risultato dice perché.</b> Per esempio: «Sasso: si è fermato e ripartito 3 volte, la stima era per un turno solo. Scrivi tutto all\'inizio, il resto mandalo dopo.»') + '</p>';
+    },
+    board: function () {
+      return '<span class="eyebrow">' + T('Board', 'Bacheca') + '</span><h3>' + T('The powers', 'I poteri') + '</h3><ul class="plist">' + DATA.holes.map(function (h) {
+        return '<li><span><b>' + esc(h.pw[0]) + '</b> <small>' + h.pw[1] + T(' · hole ', ' · buca ') + h.n + '</small></span>' + (h.s === 'done' ? '<span class="mine">' + T('yours', 'tuo') + '</span>' : '<span class="not">' + T('to win', 'da vincere') + '</span>') + '</li>';
+      }).join('') + '</ul><p class="small">' + T('The widget styles are picked with one click in the dashboard: no more Parameter to type.', 'Gli stili del widget si scelgono con un clic nella dashboard: niente più Parameter da scrivere.') + '</p>';
+    },
+    prato: function () { return course(T('Lawn', 'Prato'), 0, T('Today’s mini golf, behind the dot: par 3, cushions worth 50 points. With the Power club, already yours, you hit longer shots.', 'Il minigolf di oggi, dietro il pallino: par 3, sponde da 50 punti. Con la Mazza forte, già tua, tiri più lunghi.'), T('pullPower 7 → 9 with the club · maxSpeed 1500 → 2100 · friction 0.55 · restitution 0.8', 'pullPower 7 → 9 con la mazza · maxSpeed 1500 → 2100 · friction 0,55 · restitution 0,8'), true); },
+    ice: function () { return course(T('Ice course', 'Campo ghiacciato'), DATA.ice, T('The ball slides: it barely slows down, bounces more, stops late. If it rolls over the hole too fast, it hops right over it.', 'La pallina scivola: rallenta pochissimo, rimbalza di più, si ferma tardi. Se passa sulla buca troppo veloce, ci salta sopra.'), T('friction 0.55 → 0.85 · restitution 0.8 → 0.9 · stop 12 → 5 pt/s · captureSpeed 900', 'friction 0,55 → 0,85 · restitution 0,8 → 0,9 · stop 12 → 5 pt/s · captureSpeed 900'), DATA.played >= DATA.ice); },
+    pool: function () { return course(T('Billiards', 'Biliardo'), DATA.pool, T('Six holes, at the four corners and halfway along the long sides. Only bank shots count.', 'Sei buche, ai quattro angoli e a metà dei lati lunghi. Conta solo di sponda.'), T('restitution 0.8 → 0.92 · friction 0.6 · 6 holes of holeRadius 11 · cushionsNeeded 1', 'restitution 0,8 → 0,92 · friction 0,6 · 6 buche da holeRadius 11 · cushionsNeeded 1'), DATA.played >= DATA.pool); },
+    works: function () {
+      return '<span class="eyebrow">' + T('Work in progress', 'Lavori in corso') + '</span><h3>' + T('What’s left to build', 'Cosa resta da costruire') + '</h3><p class="small">' + T('The app already has the 9 holes worked out from the index, the “where you are” report with its tests, this map in the Analytics window and, in the mini golf, the power club, ice and billiards. Still to come, in order:', 'Nell\'app ci sono già le 9 buche calcolate dall\'indice, il rapporto «dove sei» con i test, questa mappa nella finestra Analytics e, nel minigolf, mazza forte, ghiaccio e biliardo. Restano, in ordine:') + '</p>' +
+        T('<ol class="list"><li>Mulligan, Double hole, Eagle.</li><li>The challenge of the round instead of the challenge of the day.</li><li>Widget and Touch Bar with the course, the caddie’s tip, Green jacket.</li></ol>',
+          '<ol class="list"><li>Mulligan, Buca doppia, Eagle.</li><li>La sfida del giro al posto di quella del giorno.</li><li>Widget e Touch Bar con il campo, il consiglio del caddie, Giacca verde.</li></ol>') +
+        '<p class="small">' + T('Light, always: every power is a number read when a game starts, nothing running idle.', 'Leggero, sempre: ogni potere è un numero letto quando parte una partita, niente che giri a vuoto.') + '</p>';
+    },
+    here: function () {
+      var owned = DATA.holes.filter(function (h) { return h.s === 'done'; }).map(function (h) { return h.pw[0]; });
+      return '<span class="eyebrow">' + T('Sign · ', 'Tabellone · ') + DATA.at + '</span><h3>' + T('Where you are', 'Dove sei') + '</h3><dl class="kv">' +
+        '<dt>' + T('Hole', 'Buca') + '</dt><dd>' + cur.n + ' · ' + esc(cur.t) + ', ' + n(cur.g - DATA.points) + T(' points to the green', ' punti al green') + '</dd>' +
+        '<dt>' + T('Title', 'Titolo') + '</dt><dd>' + esc(DATA.title) + '</dd>' +
+        '<dt>' + T('Points', 'Punti') + '</dt><dd>' + n(DATA.points) + '</dd>' +
+        '<dt>' + T('Holes played', 'Buche fatte') + '</dt><dd>' + DATA.played + ', ' + Math.max(0, DATA.ice - DATA.played) + T(' to the ice', ' al ghiaccio') + '</dd>' +
+        '<dt>' + T('Powers', 'Poteri') + '</dt><dd>' + owned.map(esc).join(', ') + '</dd>' +
+        '<dt>' + T('Today’s round', 'Giro di oggi') + '</dt><dd>' + DATA.round.n + ', ' + DATA.round.holes + '/18, ' + DATA.round.toPar + '</dd>' +
+        '<dt>' + T('Streak', 'Serie') + '</dt><dd>' + DATA.streak + T(', best ', ', record ') + DATA.best + '</dd>' +
+        '<dt>' + T('Clean shots', 'Colpi puliti') + '</dt><dd>' + DATA.clean + T('% of holes', '% delle buche') + '</dd></dl>' +
+        '<p class="small">' + esc(DATA.eta || T('At 50 holes a day the green of hole 5 comes in a little over a day; from there on, the trials decide.', 'Con 50 buche al giorno il green della 5 arriva in poco più di un giorno; da lì in poi decidono le prove.')) + '</p>';
+    }
+  };
+  function cardFor(k) { return /^h\d$/.test(k) ? holeCard(DATA.holes[+k.slice(1) - 1]) : CARDS[k](); }
+
+  var openEl = null, pinned = false, hideT = null;
+  var sheetMQ = window.matchMedia('(max-width: 700px), (hover: none)');
+  // The card next to what it explains (named apart from the scooter's place() below, which would hide it).
+  function placePop(el) {
+    if (sheetMQ.matches) { pop.classList.add('sheet'); return; }
+    pop.classList.remove('sheet');
+    var r = el.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+    var pw = pop.offsetWidth, ph = pop.offsetHeight;
+    var x = r.right - w.left + 14;
+    if (x + pw > w.width - 8) x = r.left - w.left - pw - 14;
+    x = Math.max(8, Math.min(x, w.width - pw - 8));
+    var y = r.top - w.top + r.height / 2 - ph / 2;
+    y = Math.max(8, Math.min(y, w.height - ph - 8));
+    pop.style.left = x + 'px'; pop.style.top = y + 'px';
+  }
+  function open(el, html) {
+    clearTimeout(hideT);
+    if (openEl && openEl !== el) openEl.classList.remove('active');
+    openEl = el; el.classList.add('active');
+    pop.innerHTML = (html || cardFor(el.getAttribute('data-k'))) + '<button class="close" type="button" id="closeb">' + T('Close', 'Chiudi') + '</button>';
+    pop.hidden = false;
+    pop.setAttribute('aria-label', el.getAttribute('aria-label') || T('The bush’s secret', 'Il segreto del cespuglio'));
+    document.getElementById('closeb').addEventListener('click', function (e) { e.stopPropagation(); close(true); });
+    placePop(el);
+  }
+  function close(force) {
+    if (pinned && !force) return;
+    pinned = false;
+    if (openEl) openEl.classList.remove('active');
+    openEl = null; pop.hidden = true;
+  }
+  Array.prototype.forEach.call(svg.querySelectorAll('[data-k]'), function (el) {
+    el.addEventListener('mouseenter', function () { if (!pinned && !sheetMQ.matches) open(el); });
+    el.addEventListener('mouseleave', function () { if (!pinned && !sheetMQ.matches) hideT = setTimeout(function () { close(); }, 160); });
+    el.addEventListener('focus', function () { if (!pinned) open(el); });
+    el.addEventListener('blur', function () { if (!pinned) close(); });
+    el.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (pinned && openEl === el) { close(true); return; }
+      pinned = true; open(el);
+    });
+    el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pinned = true; open(el); } });
+  });
+  pop.addEventListener('click', function (e) { e.stopPropagation(); });
+  document.addEventListener('click', function () { close(true); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(true); });
+  window.addEventListener('resize', function () { if (openEl) placePop(openEl); });
+
+  // The scooter rides the course so far: entrance, the closed holes, then down the hole in play as far
+  // as its points go toward the green (to the cup when only the trials are left).
+  function d(id) { return document.getElementById(id).getAttribute('d'); }
+  function join(ids) { return ids.map(function (id, i) { var s = d(id).trim(); return i ? s.replace(/^M/, 'L') : s; }).join(' '); }
+  var before = ['w0'], playing = 'h' + DATA.nowHole;
+  for (var i = 1; i < DATA.nowHole; i++) { before.push('h' + i); before.push('w' + i); }
+  var probe = document.createElementNS(NS, 'path');
+  probe.setAttribute('d', join(before)); svg.appendChild(probe);
+  var lenBefore = probe.getTotalLength();
+  probe.setAttribute('d', d(playing));
+  var stop = lenBefore + probe.getTotalLength() * share;
+  probe.remove();
+  var trail = document.getElementById('trail');
+  trail.setAttribute('d', join(before.concat([playing])));
+  var total = trail.getTotalLength();
+  // The scooter stays upright and turns round when it goes left.
+  var ball = document.getElementById('ball'), tag = document.getElementById('balltag'), tagt = document.getElementById('tagt'), tagbg = document.getElementById('tagbg');
+  var scooter = document.getElementById('scooter'), trick = document.getElementById('trick'), speed = document.getElementById('speed'), facing = 1, busy = true;
+  var full = document.createElementNS(NS, 'path'), all = ['w0'];
+  for (var j = 1; j <= 9; j++) { all.push('h' + j); if (j < 9) all.push('w' + j); }
+  full.setAttribute('d', join(all)); full.setAttribute('fill', 'none'); svg.appendChild(full);
+  var fullLen = full.getTotalLength();
+  function place(path, len, max, dir) {
+    var p = path.getPointAtLength(len), q = path.getPointAtLength(Math.max(0, Math.min(max, len + 2 * dir)));
+    if (q.x - p.x < -0.3) facing = -1; else if (q.x - p.x > 0.3) facing = 1;
+    ball.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ')');
+    scooter.setAttribute('transform', facing < 0 ? 'scale(-1 1)' : 'scale(1 1)');
+  }
+  function at(len) { place(trail, len, total, 1); trail.style.strokeDasharray = len + ' ' + total; }
+  function say(text) {
+    tagt.textContent = text;
+    var w = Math.max(72, text.length * 9 + 20);
+    tagbg.setAttribute('x', -w / 2); tagbg.setAttribute('width', w);
+  }
+  function ease(k) { return k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; }
+  function animate(dur, frame, done) {
+    var t0 = null;
+    function step(ts) {
+      if (t0 === null) t0 = ts;
+      var k = Math.min(1, (ts - t0) / dur);
+      frame(k);
+      if (k < 1) requestAnimationFrame(step); else if (done) done();
+    }
+    requestAnimationFrame(step);
+  }
+  var still = DATA.still || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var HERE = T('YOU’RE HERE', 'SEI QUI');
+  if (LANG !== 'it') say(HERE);   // the tag sized for the English (the Italian keeps the size it has in the markup)
+  function ready() { tag.setAttribute('opacity', '1'); busy = false; }
+  if (still) { at(stop); ready(); }
+  else { at(0); animate(3400, function (k) { at(stop * ease(k)); }, ready); }
+
+  // Tricks, by clicks: 1 a hop, 2 a 360, 3 (or 4) a backflip, 5 the turbo: 300 km/h for 2.4 seconds,
+  // out to the end of the course and back.
+  var TRICKS = { 1: [T('HOP', 'SALTELLO'), 520, 16, 0], 2: ['360!', 820, 22, 360], 3: ['BACKFLIP!', 1000, 30, -360] };
+  function doTrick(n) {
+    busy = true;
+    var done = function () { trick.removeAttribute('transform'); speed.setAttribute('opacity', '0'); say(HERE); busy = false; };
+    if (n >= 5) {
+      say('300 KM/H');
+      if (still) { setTimeout(done, 1200); return; }
+      speed.setAttribute('opacity', '1');
+      animate(2400, function (k) {
+        var out = k < .5, e = out ? ease(k * 2) : ease((1 - k) * 2);
+        place(full, stop + (fullLen - stop) * e, fullLen, out ? 1 : -1);
+      }, function () { place(full, stop, fullLen, 1); done(); });
+      return;
+    }
+    var t = TRICKS[Math.min(n, 3)];
+    say(t[0]);
+    if (still) { setTimeout(done, 900); return; }
+    animate(t[1], function (k) {
+      var y = -t[2] * 4 * k * (1 - k);
+      trick.setAttribute('transform', 'translate(0 ' + y.toFixed(1) + ') rotate(' + (t[3] * ease(k)).toFixed(1) + ' 0 -12)');
+    }, done);
+  }
+  var clicks = 0, clickT = null;
+  function tap(e) {
+    e.stopPropagation(); e.preventDefault();
+    if (busy) return;
+    clicks++;
+    clearTimeout(clickT);
+    clickT = setTimeout(function () { var c = clicks; clicks = 0; doTrick(c); }, clicks >= 5 ? 0 : 420);
+  }
+  ball.addEventListener('click', tap);
+  ball.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') tap(e); });
+
+  // Trump Lake: every click floats a red cap where you clicked; the last 6 stay.
+  var lake = document.getElementById('lake'), caps = document.getElementById('caps');
+  lake.addEventListener('click', function (e) {
+    e.stopPropagation();
+    close(true);
+    var pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    var p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    var g = document.createElementNS(NS, 'g');
+    g.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ' ' + p.y.toFixed(1) + ')');
+    g.innerHTML = '<circle class="splash" r="8"/><g class="cap-in"><ellipse class="ripple" cx="2" cy="3" rx="17" ry="4"/><g class="cap-bob">' +
+      '<path class="cap" d="M-9 1 C-9 -9 9 -9 9 1 Z"/><path class="cap-brim" d="M7 0 C12 -1 17 0 19 2 C15 3.5 10 3 7 2.6 Z"/>' +
+      '<circle class="cap" cx="0" cy="-6.8" r="1.4"/><path class="cap-seam" d="M0 -6.5 C-2.5 -3.5 -3.5 -1 -3.5 1"/></g></g>';
+    caps.appendChild(g);
+    while (caps.childNodes.length > 6) caps.removeChild(caps.firstChild);
+  });
+})();
+</script>

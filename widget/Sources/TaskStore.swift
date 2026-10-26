@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// One file of ~/.claude/task-eta/live/, written by the task-eta hooks (task_eta.py).
 struct LiveTask: Decodable {
@@ -52,6 +52,13 @@ struct LiveTask: Decodable {
     }
 }
 
+/// Size and modification date of a file: when they are the same, its content is too.
+func fileStamp(_ path: String) -> String {
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+          let date = attrs[.modificationDate] as? Date, let size = attrs[.size] as? NSNumber else { return "" }
+    return "\(size.intValue)@\(date.timeIntervalSince1970)"
+}
+
 /// The kinds of work task_eta.py estimates (KINDS there).
 let kindNames: Set<String> = ["quick", "medium", "long", "agents"]
 
@@ -100,8 +107,6 @@ let backgroundStaleAfter: Double = 3 * 3600
 /// Finished and stopped tasks disappear after this; a task waiting for you stays longer.
 let hideAfter: Double = 60 * 60
 let waitingHideAfter: Double = 3 * 3600
-/// The menu bar counts the tasks finished within this window.
-let doneRecentlyWindow: Double = 30 * 60
 
 struct TaskItem: Identifiable {
     let id: String
@@ -112,6 +117,7 @@ struct TaskItem: Identifiable {
     var declaredRange: (low: Double, high: Double)? = nil  // the range in Claude's ⏱ line, seconds
     var declaredKind: String? = nil  // the kind of work in Claude's ⏱ line
     var title: String? = nil       // the session's title in the Claude app sidebar
+    var appSession: String? = nil  // the session's id in the Claude app ("local_…"), for the chat link
 
     var state: TaskState {
         if input != nil { return .waiting }
@@ -184,6 +190,19 @@ struct TaskItem: Identifiable {
         }
     }
 
+    /// The same task across the renames of its live file (<session>.json, then <session>-<start>.json).
+    var key: String { "\(data.session ?? id)|\(safeInt(data.startTs))" }
+
+    /// The session's chat in the Claude app, when it is one of the app's sidebar sessions.
+    var chatURL: URL? { appSession.flatMap { URL(string: "claude://code/continue?session=\($0)") } }
+
+    /// Seconds past the estimate and how many times the estimate, once the task runs over it.
+    func overrun(at now: Double) -> (seconds: Double, ratio: Double)? {
+        guard state != .stale, let est = estimate, est > 0 else { return nil }
+        let e = elapsed(at: now)
+        return e > est ? (e - est, e / est) : nil
+    }
+
     /// Headless `claude -p` runs (benchmarks, scripts), hidden unless the user asks for them.
     /// Older live files have no entrypoint: a session in a temporary folder counts as one.
     var automated: Bool {
@@ -193,21 +212,86 @@ struct TaskItem: Identifiable {
     }
 }
 
+/// The visible tasks of one session: the first is the one the row shows, the others are the
+/// session's earlier requests.
+struct TaskGroup: Identifiable {
+    let id: String
+    let items: [TaskItem]
+    var main: TaskItem { items[0] }
+    var earlier: [TaskItem] { Array(items.dropFirst()) }
+    /// A finished (or stopped) section can be taken off the list.
+    var closable: Bool { main.state == .done || main.state == .stale }
+}
+
+/// The session id of the Claude app ("local_…") from the name of its session file, if plausible.
+func appSessionID(fromFileName name: String) -> String? {
+    guard name.hasSuffix(".json") else { return nil }
+    let id = String(name.dropLast(5))
+    let rest = id.dropFirst("local_".count)
+    guard id.hasPrefix("local_"), (1...64).contains(rest.count),
+          rest.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }) else { return nil }
+    return id
+}
+
 /// Reads the live folder every 2 seconds and ticks the clock every second. Besides the small
 /// live files it reads only the start of each running task's reply, once, for Claude's ⏱ line.
 final class TaskStore: ObservableObject {
-    @Published private(set) var items: [TaskItem] = []
-    @Published private(set) var now = Date().timeIntervalSince1970
+    @Published private(set) var items: [TaskItem] = [] { didSet { generation += 1 } }
+    @Published private(set) var now = Date().timeIntervalSince1970 { didSet { generation += 1 } }
+    /// Bumped whenever what `visible` depends on changes: the list is filtered and sorted once.
+    private var generation = 0
+    private var visibleCache: (generation: Int, items: [TaskItem]) = (-1, [])
     /// How many tasks the list shows: 5, then 5 more per click on "5 more".
     @Published var pageLimit = 5
     @Published var showAutomated: Bool {
-        didSet { UserDefaults.standard.set(showAutomated, forKey: "showAutomated") }
+        didSet {
+            UserDefaults.standard.set(showAutomated, forKey: "showAutomated")
+            generation += 1
+        }
     }
     /// Show the folder instead of prompts, session titles, questions and job names: the panel is on
     /// every Space and the menu can be open while the screen is shared.
     @Published var hidePrompts: Bool {
         didSet { UserDefaults.standard.set(hidePrompts, forKey: "hidePrompts") }
     }
+    /// Sessions opened to show their earlier requests.
+    @Published var expanded: Set<String> = []
+    /// Finished tasks taken off the list (their keys), remembered for a day.
+    @Published private(set) var dismissed: Set<String> { didSet { generation += 1 } }
+    /// The desktop panel shows only the counts, no times: a click on its header switches.
+    @Published var compact: Bool {
+        didSet { if !demo { UserDefaults.standard.set(compact, forKey: "panelCompact") } }
+    }
+    /// The short panel blinks when a task finishes or starts waiting for you.
+    @Published private(set) var flash: Flash?
+    /// The easter egg of the dot next to "in corso": every click ever, kept across restarts (101 in
+    /// all open the mini golf, more than one sitting is fine).
+    @Published private(set) var dotClicks: Int {
+        didSet { if !demo { UserDefaults.standard.set(dotClicks, forKey: "dotClicks") } }
+    }
+    /// The clicks of this run, never stopping more than `runGap`: the surprises at 8, 69 and 101
+    /// count these, so they come back every run (Nick: "ogni volta deve ripartire"). Not saved.
+    @Published private(set) var dotRun = 0
+    /// Clicks since the app started. Not saved.
+    @Published private(set) var dotSession = 0
+    /// The longest run ever.
+    @Published private(set) var dotBestRun: Int {
+        didSet { if !demo { UserDefaults.standard.set(dotBestRun, forKey: "dotBestRun") } }
+    }
+    private var lastDotTap = 0.0
+    static let runGap = 1.5
+    /// Mini golf on the dot, unlocked for good at its 101st click (see Golf.swift).
+    @Published var golfUnlocked: Bool {
+        didSet { if !demo { UserDefaults.standard.set(golfUnlocked, forKey: "golfUnlocked") } }
+    }
+    @Published var dotBurst: DotBurst?
+    /// Rows celebrating a task that has just finished (task key -> celebration).
+    @Published var celebrations: [String: Celebration] = [:]
+    private var lastStates: [String: TaskState] = [:]
+    /// Finished tasks, celebrated once still finished at the next reload: a turn that ends with a
+    /// question shows up first as done, then as waiting, and that one is no win.
+    private var pendingCelebration: [String: Double] = [:]
+    private var statesPrimed = false
 
     static let pageSize = 5
 
@@ -217,8 +301,12 @@ final class TaskStore: ObservableObject {
     private let demo: Bool
     private var declaredFound: [String: DeclaredLine] = [:]  // task key -> Claude's ⏱ line
     private var scannedUpTo: [String: UInt64] = [:]    // task key -> transcript bytes already read
-    private var titles: [String: String] = [:]         // CLI session id -> title in the app sidebar
+    private var titles: [String: AppSession] = [:]     // CLI session id -> the session in the app sidebar
     private var titlesReadAt: Double = 0
+    /// Live files already decoded, kept while their size and date do not change.
+    private var decodedFiles: [String: (stamp: String, task: LiveTask)] = [:]
+    /// The app's session files already read (path -> date, CLI session id, session).
+    private var sessionFiles: [String: (stamp: String, cli: String, session: AppSession)] = [:]
 
     /// The Claude app keeps one file per session, with the CLI session id and the title shown in
     /// its sidebar near the top: the first 4 KB of each are enough.
@@ -238,11 +326,26 @@ final class TaskStore: ObservableObject {
         return claude.appendingPathComponent("task-eta/live", isDirectory: true)
     }()
 
+    /// task-eta's index, next to the live folder: what the dashboard, the game and the gems read.
+    static var indexURL: URL { defaultDir.deletingLastPathComponent().appendingPathComponent("index.json") }
+    var indexURL: URL { dir.deletingLastPathComponent().appendingPathComponent("index.json") }
+    /// The clicks on the "in corso" dot that open the mini golf.
+    static let golfClicks = 101
+
     init(dir: URL = TaskStore.defaultDir) {
         self.dir = dir
         self.demo = false
         self.showAutomated = UserDefaults.standard.bool(forKey: "showAutomated")
         self.hidePrompts = UserDefaults.standard.bool(forKey: "hidePrompts")
+        self.compact = UserDefaults.standard.bool(forKey: "panelCompact")
+        self.dotClicks = UserDefaults.standard.integer(forKey: "dotClicks")
+        self.dotBestRun = UserDefaults.standard.integer(forKey: "dotBestRun")
+        self.golfUnlocked = UserDefaults.standard.bool(forKey: "golfUnlocked")
+            || DashDebug.golf
+        let cutoff = Date().timeIntervalSince1970 - 24 * 3600
+        self.dismissed = Set((UserDefaults.standard.stringArray(forKey: "dismissed") ?? []).filter {
+            (Double($0.split(separator: "|").last ?? "") ?? 0) > cutoff
+        })
     }
 
     init(demoItems: [TaskItem], now: Double) {
@@ -250,6 +353,11 @@ final class TaskStore: ObservableObject {
         self.demo = true
         self.showAutomated = false
         self.hidePrompts = false
+        self.compact = false
+        self.dotClicks = 0
+        self.dotBestRun = 0
+        self.golfUnlocked = false
+        self.dismissed = []
         self.items = demoItems
         self.now = now
     }
@@ -262,10 +370,13 @@ final class TaskStore: ObservableObject {
         self.timer = timer
     }
 
+    /// The clock moves every second only while a task runs (its time is on screen); otherwise every
+    /// 15 seconds is enough, for finished tasks to leave the list after an hour.
     private func tick() {
         ticks += 1
         if ticks % 2 == 0 { reload() }
-        now = Date().timeIntervalSince1970
+        let running = items.contains { $0.state == .running || $0.state == .background }
+        if running || ticks % 15 == 0 { now = Date().timeIntervalSince1970 }
     }
 
     func reload() {
@@ -279,23 +390,41 @@ final class TaskStore: ObservableObject {
         let now = Date().timeIntervalSince1970
         if now - titlesReadAt > 10 { readTitles(); titlesReadAt = now }
         var out: [TaskItem] = []
+        var seenFiles: Set<String> = []
+        defer { decodedFiles = decodedFiles.filter { seenFiles.contains($0.key) } }
         for name in names where name.hasSuffix(".json") && !name.hasPrefix(".") {
             let url = dir.appendingPathComponent(name)
-            guard isRegularFile(url.path), let raw = try? Data(contentsOf: url),
-                  let decoded = try? decoder.decode(LiveTask.self, from: raw),
-                  let task = decoded.sanitized() else { continue }
+            guard isRegularFile(url.path) else { continue }
+            let stamp = fileStamp(url.path)
+            let task: LiveTask
+            if let cached = decodedFiles[name], cached.stamp == stamp, !stamp.isEmpty {
+                task = cached.task
+            } else {
+                guard let raw = try? Data(contentsOf: url),
+                      let decoded = try? decoder.decode(LiveTask.self, from: raw),
+                      let fresh = decoded.sanitized() else { continue }
+                task = fresh
+                decodedFiles[name] = (stamp, fresh)
+            }
+            seenFiles.insert(name)
             var quiet: Double?
             if task.status != "done" {
                 if let path = task.transcript,
                    let attrs = try? fm.attributesOfItem(atPath: path),
                    let modified = attrs[.modificationDate] as? Date {
                     quiet = now - modified.timeIntervalSince1970
+                } else if let path = task.transcript, !path.isEmpty, now - task.startTs > 120,
+                          !fm.fileExists(atPath: path) {
+                    continue // the transcript is gone (the session was deleted): nothing left to follow
                 } else if now - task.startTs > 3 * 3600 {
                     quiet = now - task.startTs // no transcript to look at: give up after 3 hours
                 }
             }
             var item = TaskItem(id: name, data: task, quiet: quiet)
-            item.title = task.session.flatMap { titles[$0] }
+            if let session = task.session, let app = titles[session] {
+                item.title = app.title
+                item.appSession = app.id
+            }
             // The marker belongs to the session's current task, <session>.json.
             let marker = task.session.map { dir.appendingPathComponent("\($0).input") }
             if let session = task.session, name == "\(session).json", let marker, isRegularFile(marker.path),
@@ -310,6 +439,7 @@ final class TaskStore: ObservableObject {
             out.append(item)
         }
         items = out
+        updateCelebrations(out, now: now)
     }
 
     private func readTitles() {
@@ -318,7 +448,9 @@ final class TaskStore: ObservableObject {
         guard let cliRe = try? NSRegularExpression(pattern: #""cliSessionId"\s*:\s*"([^"]+)""#),
               let titleRe = try? NSRegularExpression(pattern: #""title"\s*:\s*("(?:[^"\\]|\\.)*")"#)
         else { return }
-        var found: [String: String] = [:]
+        var found: [String: AppSession] = [:]
+        var fresh: [String: (stamp: String, cli: String, session: AppSession)] = [:]
+        defer { sessionFiles = fresh }
         for account in accounts {
             let accountDir = TaskStore.appSessionsDir.appendingPathComponent(account)
             for org in (try? fm.contentsOfDirectory(atPath: accountDir.path)) ?? [] {
@@ -326,17 +458,28 @@ final class TaskStore: ObservableObject {
                 for name in (try? fm.contentsOfDirectory(atPath: orgDir.path)) ?? []
                 where name.hasPrefix("local_") && name.hasSuffix(".json") {
                     let path = orgDir.appendingPathComponent(name).path
-                    guard isRegularFile(path), let fh = FileHandle(forReadingAtPath: path) else { continue }
+                    guard isRegularFile(path) else { continue }
+                    let stamp = fileStamp(path)
+                    if let cached = sessionFiles[path], cached.stamp == stamp, !stamp.isEmpty {
+                        found[cached.cli] = cached.session
+                        fresh[path] = cached
+                        continue
+                    }
+                    guard let fh = FileHandle(forReadingAtPath: path) else { continue }
                     let head = fh.readData(ofLength: 4096)
                     try? fh.close()
                     guard let text = String(data: head, encoding: .utf8) ?? String(data: head.prefix(3000), encoding: .utf8)
                     else { continue }
                     let range = NSRange(text.startIndex..., in: text)
-                    guard let c = cliRe.firstMatch(in: text, range: range), let cr = Range(c.range(at: 1), in: text),
-                          let t = titleRe.firstMatch(in: text, range: range), let tr = Range(t.range(at: 1), in: text),
-                          let title = try? JSONDecoder().decode(String.self, from: Data(text[tr].utf8)),
-                          !title.isEmpty else { continue }
-                    found[String(text[cr])] = title
+                    guard let c = cliRe.firstMatch(in: text, range: range), let cr = Range(c.range(at: 1), in: text)
+                    else { continue }
+                    let title = titleRe.firstMatch(in: text, range: range)
+                        .flatMap { Range($0.range(at: 1), in: text) }
+                        .flatMap { try? JSONDecoder().decode(String.self, from: Data(text[$0].utf8)) }
+                    let session = AppSession(title: title?.isEmpty == false ? title : nil,
+                                             id: appSessionID(fromFileName: name))
+                    found[String(text[cr])] = session
+                    fresh[path] = (stamp, String(text[cr]), session)
                 }
             }
         }
@@ -389,27 +532,169 @@ final class TaskStore: ObservableObject {
     /// Needs you first, then running, in the background, stopped (newest first), finished last
     /// (last finished first).
     var visible: [TaskItem] {
-        items.filter { $0.visible(at: now) && (showAutomated || !$0.automated) }
+        if visibleCache.generation == generation { return visibleCache.items }
+        let list = items.filter { $0.visible(at: now) && (showAutomated || !$0.automated) && !dismissed.contains($0.key) }
             .sorted { a, b in
                 if a.state != b.state { return a.state.rawValue < b.state.rawValue }
                 if a.state == .done { return (a.data.endTs ?? 0) > (b.data.endTs ?? 0) }
                 return a.data.startTs > b.data.startTs
             }
+        visibleCache = (generation, list)
+        return list
     }
 
     var hiddenAutomated: Int {
-        showAutomated ? 0 : items.filter { $0.visible(at: now) && $0.automated }.count
+        showAutomated ? 0 : items.filter { $0.visible(at: now) && $0.automated && !dismissed.contains($0.key) }.count
+    }
+
+    /// The visible tasks, one group per session, in the order of each session's first task.
+    var groups: [TaskGroup] {
+        var order: [String] = []
+        var bySession: [String: [TaskItem]] = [:]
+        for item in visible {
+            let session = item.data.session ?? item.id
+            if bySession[session] == nil { order.append(session) }
+            bySession[session, default: []].append(item)
+        }
+        return order.map { TaskGroup(id: $0, items: bySession[$0] ?? []) }
+    }
+
+    /// The task the menu bar follows: the newest running one, else one with jobs in the background.
+    var active: TaskItem? {
+        let all = visible
+        return all.first { $0.state == .running } ?? all.first { $0.state == .background }
+    }
+
+    /// Starts the short panel's blink, and ends it once over (so nothing animates after).
+    func blink(waiting: Bool) {
+        let f = Flash(waiting: waiting, start: Date().timeIntervalSince1970)
+        flash = f
+        DispatchQueue.main.asyncAfter(deadline: .now() + Flash.duration + 0.2) { [weak self] in
+            if self?.flash == f { self?.flash = nil }
+        }
+    }
+
+    /// A click on the dot (held: how long it was pressed): a jolt and a sound every time, rising with
+    /// the run. In a run one dot flies off at the 8th click, 69 at the 69th, 101 and the cheer at the
+    /// 101st, every run again. The 101st click in all (or of a run) opens the mini golf for good.
+    func tapDot(held: Double = 0) {
+        let now = Date().timeIntervalSince1970
+        dotRun = now - lastDotTap <= TaskStore.runGap ? dotRun + 1 : 1
+        lastDotTap = now
+        dotClicks = min(dotClicks + 1, 999_999)
+        dotSession += 1
+        if dotRun > dotBestRun { dotBestRun = dotRun }
+        DotSound.shared.click(count: dotRun, held: held)
+        var count: Int?
+        if dotRun == 8 { count = 1 }
+        if dotRun == 69 { count = 69 }
+        if !golfUnlocked && dotClicks >= TaskStore.golfClicks {
+            unlockGolf(by: "clic")
+            return
+        } else if dotRun == TaskStore.golfClicks {
+            JohnCena.cheer(level: 1)
+            count = 101
+        } else if count != nil {
+            NSSound(named: count == 69 ? "Hero" : "Pop")?.play()
+        }
+        guard let count else { return }
+        let burst = DotBurst(count: count, start: Date().timeIntervalSince1970)
+        dotBurst = burst
+        DispatchQueue.main.asyncAfter(deadline: .now() + burst.duration + 0.3) { [weak self] in
+            if self?.dotBurst == burst { self?.dotBurst = nil }
+        }
+    }
+
+    /// The mini golf opens for good: 101 dots and the cheer. By "clic" (the 101st) or "tasti" (the dot
+    /// dragged while holding ⌘, M and G).
+    func unlockGolf(by way: String) {
+        guard !golfUnlocked else { return }
+        golfUnlocked = true
+        if !demo { UserDefaults.standard.set(way, forKey: "golfUnlockedBy") }
+        JohnCena.cheer(level: 1)
+        let burst = DotBurst(count: 101, start: Date().timeIntervalSince1970)
+        dotBurst = burst
+        DispatchQueue.main.asyncAfter(deadline: .now() + burst.duration + 0.3) { [weak self] in
+            if self?.dotBurst == burst { self?.dotBurst = nil }
+        }
+    }
+
+    /// The Claude app's session for a CLI session id, as last read from the app's files.
+    func appSession(forCLI cli: String) -> AppSession? { titles[cli] }
+
+    /// A still copy of the list, with the same rows and the same size, that never updates.
+    func frozenCopy() -> TaskStore {
+        let copy = TaskStore(demoItems: items, now: now)
+        copy.showAutomated = showAutomated
+        copy.hidePrompts = hidePrompts
+        copy.expanded = expanded
+        copy.pageLimit = pageLimit
+        copy.dismissed = dismissed
+        copy.compact = compact
+        return copy
+    }
+
+    /// Starts the celebration of the tasks that have just finished, ends those that are over.
+    private func updateCelebrations(_ items: [TaskItem], now: Double) {
+        var states: [String: TaskState] = [:]
+        for item in items {
+            let key = item.key
+            let state = item.state
+            states[key] = state
+            if statesPrimed, state == .done, let before = lastStates[key], before != .done, before != .waiting {
+                pendingCelebration[key] = pendingCelebration[key] ?? now
+            }
+            if statesPrimed, state == .waiting, let before = lastStates[key], before != .waiting,
+               showAutomated || !item.automated {
+                blink(waiting: true)
+            }
+            if state == .done, let since = pendingCelebration[key], now - since >= 1.5,
+               let result = item.outcome(at: now) {
+                pendingCelebration[key] = nil
+                var outcome = result.outcome
+                if GameMood.current == .miniera, let est = item.estimate, est > 0 {
+                    outcome = Ore(real: est + result.delta, estimate: est, range: item.range).celebration(slow: result.delta > 0)
+                }
+                celebrations[key] = Celebration(outcome: outcome, start: Date().timeIntervalSince1970,
+                                                delta: result.delta, estimate: item.estimate ?? 0, range: item.range)
+                if showAutomated || !item.automated { blink(waiting: false) }
+            }
+        }
+        pendingCelebration = pendingCelebration.filter { states[$0.key] == .done }
+        let over = celebrations.filter { now - $0.value.start > Celebration.duration + 0.5 }
+        if !over.isEmpty { celebrations = celebrations.filter { over[$0.key] == nil } }
+        lastStates = states
+        statesPrimed = true
+    }
+
+    /// Celebrates the first rows, one outcome each (tests only).
+    func celebrateForDebug() {
+        let start = Date().timeIntervalSince1970
+        for (group, outcome) in zip(groups, Outcome.allCases) {
+            let delta: Double = [Outcome.exact: 4, .faster: -100, .onTime: 40, .slower: 600][outcome] ?? 0
+            celebrations[group.main.key] = Celebration(outcome: outcome, start: start, delta: delta, estimate: 120)
+        }
+    }
+
+    /// Takes a finished section off the list: its finished and stopped tasks, not a new one.
+    func dismiss(_ group: TaskGroup) {
+        for item in group.items where item.state == .done || item.state == .stale {
+            dismissed.insert(item.key)
+        }
+        expanded.remove(group.id)
+        if !demo { UserDefaults.standard.set(Array(dismissed), forKey: "dismissed") }
     }
 
     var runningCount: Int { visible.filter { $0.state == .running || $0.state == .background }.count }
     var waitingCount: Int { visible.filter { $0.state == .waiting }.count }
-    /// For the menu bar: tasks finished in the last 30 minutes (Claude's turn over, no jobs left
-    /// in the background), including those that end by asking you something. Automated runs
-    /// count only when they are shown.
-    var doneRecentlyCount: Int {
-        items.filter { $0.data.status == "done" && now - ($0.data.endTs ?? 0) < doneRecentlyWindow
-            && (showAutomated || !$0.automated) }.count
-    }
+    /// Finished in the last hour and still in the list: the menu bar's, the panel's and the iPhone's count.
+    var doneCount: Int { visible.filter { $0.state == .done }.count }
+}
+
+/// A session of the Claude app: its sidebar title and its id for the chat link.
+struct AppSession {
+    var title: String?
+    var id: String?
 }
 
 /// Claude's ⏱ line: the estimate, the likely range and the kind of work it declared.
@@ -423,6 +708,9 @@ private let estimateRe = try? NSRegularExpression(
     pattern: #":[ \t]*(?:\*\*[ \t]*)?(?:~[ \t]*)?(\d{1,9}(?:[.,]\d{1,3})?)[ \t]*(hours?|h|ore|ora|minutes?|min|m|seconds?|sec|s)\b"#)
 private let rangeRe = try? NSRegularExpression(
     pattern: #"(?:\blikely|\btra)[ \t]+~?(\d{1,9}(?:[.,]\d{1,3})?)[ \t]*(s|min|h|ore)?[ \t]+(?:to|e)[ \t]+~?(\d{1,9}(?:[.,]\d{1,3})?)[ \t]*(s|min|h|ore)\b"#)
+/// The kinds' Italian names in older ⏱ lines and index entries (LEGACY_KINDS in task_eta.py).
+let legacyKinds = ["veloce": "quick", "medio": "medium", "lungo": "long", "agenti": "agents"]
+
 private let kindRe = try? NSRegularExpression(
     pattern: #"\b(quick|medium|long|veloce|medio|lungo|sub ?agents?)\b"#, options: [.caseInsensitive])
 
@@ -464,16 +752,12 @@ func parseDeclaredLine(_ text: String) -> DeclaredLine? {
         }
         if let k = kindRe.firstMatch(in: s, range: rest), let kr = Range(k.range(at: 1), in: s) {
             let word = s[kr].lowercased()
-            let legacy = ["veloce": "quick", "medio": "medium", "lungo": "long"]
-            out.kind = word.hasPrefix("sub") ? "agents" : (legacy[word] ?? word)
+            out.kind = word.hasPrefix("sub") ? "agents" : (legacyKinds[word] ?? word)
         }
         return out
     }
     return nil
 }
-
-/// Seconds of Claude's ⏱ estimate, if its line is there.
-func parseDeclaredEstimate(_ text: String) -> Double? { parseDeclaredLine(text)?.seconds }
 
 // MARK: - formatting
 
@@ -497,7 +781,27 @@ func minuteRange(_ low: Double, _ high: Double) -> String {
     return lo == hi ? "\(lo) min" : "\(lo)-\(hi) min"
 }
 
+/// How far past the estimate: "+45s", "+10 min".
+func overText(_ seconds: Double) -> String {
+    seconds < 60 ? "+\(clock(seconds))" : "+\(max(1, safeInt((seconds / 60).rounded()))) min"
+}
+
+/// How many times the estimate: "×2,5", "×6".
+func timesText(_ ratio: Double) -> String {
+    let r = (ratio * 10).rounded() / 10
+    if r >= 10 || r == r.rounded() { return "×\(safeInt(r.rounded()))" }
+    return "×" + Loc.decimal(r)
+}
+
 extension TaskItem {
+    /// The overrun in words: "+40s oltre la stima", "+10 min oltre la stima (×6)"; short: "+10 min (×6)".
+    func overrunText(at now: Double, short: Bool = false) -> String? {
+        guard let o = overrun(at: now) else { return nil }
+        let times = o.ratio >= 2 ? " (\(timesText(o.ratio)))" : ""
+        return short ? overText(o.seconds) + times
+            : L("\(overText(o.seconds)) over the estimate\(times)", "\(overText(o.seconds)) oltre la stima\(times)")
+    }
+
     var estimateText: String? {
         if let m = data.estimateMin, m > 0 { return approxEstimate(m * 60) }
         if let d = declared, d > 0 { return approxEstimate(d) }
@@ -529,12 +833,12 @@ extension TaskItem {
         let detail = hidePrompts ? "" : input?.detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let what: String
         switch input?.kind {
-        case "question", "domanda": what = "question for you"
-        case "plan", "piano": what = "plan to approve"
-        case "choice", "scelta": what = "pick where to run it"
-        case "permission", "permesso": what = "permission needed"
-        case "reply", "risposta": what = "asked you something"
-        default: what = "waiting for your reply"
+        case "question", "domanda": what = L("has a question for you", "ha una domanda per te")
+        case "plan", "piano": what = L("plan to approve", "piano da approvare")
+        case "choice", "scelta": what = L("pick where to run it", "scegli dove eseguirlo")
+        case "permission", "permesso": what = L("permission needed", "serve un permesso")
+        case "reply", "risposta": what = L("asked you something", "ti ha chiesto qualcosa")
+        default: what = L("waiting for your reply", "aspetta la tua risposta")
         }
         return detail.isEmpty ? what : "\(what): \(detail)"
     }

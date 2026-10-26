@@ -53,7 +53,7 @@ You can also ask Claude: *"set up task-eta from this folder"*. The skill explain
 |---|---|
 | **Reads** | The transcripts Claude Code already keeps in `~/.claude/projects`, only after you say yes. On a Mac with the Claude desktop app, the model, effort and title of each session from the app's own files. |
 | **Writes** | `~/.claude/task-eta/`: your task times, the first 300 characters of each prompt with secrets in common formats replaced by `[secret]` (API keys and tokens by their prefix, private keys, long random strings, values after a name such as `password:` or `DB_PASSWORD=`), model and effort. Private to your user (folders 0700, files 0600). The masking works by patterns, so rotate any key you paste into a prompt anyway. The hooks in `~/.claude/settings.json`, the optional rule in `~/.claude/CLAUDE.md`, the optional app in `~/Applications`. |
-| **Never** | No network code (Python standard library only, a Swift app with no networking), no telemetry, no account. The author receives nothing. |
+| **Never** | No network code in the hooks (Python standard library only), no telemetry, no account. The author receives nothing. The app's only network code is the optional iPhone widget server: off until you turn it on, it answers only devices on your Mac's own network that send its code. |
 | **Good to know** | To help Claude pick the kind of work, the hook adds up to 5 snippets (70 characters each) of your own similar past prompts from the same project to each new prompt, with secrets masked and marked as untrusted data. They reach the model like the rest of your conversation. |
 
 Remove everything with `python3 install.py --uninstall`; add `--purge` to delete your history too.

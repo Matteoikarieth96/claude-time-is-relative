@@ -5,7 +5,8 @@
 #   ./build.sh --run            build, then (re)start that copy
 #
 # install.py copies the app to ~/Applications and can turn on open at login.
-# The app is signed ad hoc on this Mac, has no network code and no sandbox entitlements.
+# The app is signed ad hoc on this Mac and has no sandbox entitlements. Its only network code is
+# the iPhone widget's server (PhoneServer.swift): off by default, local network only.
 set -eu
 cd "$(dirname "$0")"
 
@@ -30,6 +31,9 @@ mkdir -p "$APP.tmp/Contents/MacOS" "$APP.tmp/Contents/Resources"
 xcrun --sdk macosx swiftc -O -sdk "$SDK" -target "$(uname -m)-apple-macos14.0" \
   -o "$APP.tmp/Contents/MacOS/TaskETA" Sources/*.swift
 cp Info.plist "$APP.tmp/Contents/Info.plist"
+cp iphone/TaskETA.js "$APP.tmp/Contents/Resources/TaskETA.js" # the iPhone widget, filled in by the settings
+cp -R campo "$APP.tmp/Contents/Resources/campo" # the game's map for the dashboard, with its Barlow fonts (OFL)
+cp -R miniera "$APP.tmp/Contents/Resources/miniera" # the mine's fonts, Pixelify Sans and VT323 for the digits (OFL); Minecraft's icons stay in ~/.claude/task-eta/minerali
 codesign --force --sign - "$APP.tmp" >/dev/null 2>&1
 rm -rf "$APP"
 mv "$APP.tmp" "$APP"
