@@ -81,7 +81,7 @@ only, no network code, files private to your user. Gaming Mode adds:
 | | |
 |---|---|
 | **Writes** | In `~/.claude/task-eta/`: `miniera.json` (the mine's pickaxe), `language.json`, the weekly analysis' `insights-input.json` and `insights.json` if you set it up. Folders you fill yourself: `logos/`, `minerali/`, `sounds/`. |
-| **Network** | Only the iPhone widget, off until you turn it on. Then the app answers on port 8765 of your local network, over plain HTTP, and only to requests that carry its random code. The code sits in the script the app writes to iCloud Drive > Scriptable, so it syncs through your iCloud account. Session titles cross your Wi-Fi unencrypted: keep it off on networks you don't trust. |
+| **Network** | Only the iPhone widget, off until you turn it on. Then the app answers on port 8765 of your local network, over plain HTTP, and only to requests that carry its random code. The code sits in the script the app writes to iCloud Drive > Scriptable, so it syncs through your iCloud account. Only devices on the subnet of the Mac's Wi-Fi or Ethernet get an answer (a /16 or narrower; VPN tunnels never). By default the iPhone gets only each task's folder name; with "Prompts and titles on the iPhone" on, prompts and session titles cross your network unencrypted, so keep that off on networks you don't trust. Turning the widget off deletes the script from iCloud Drive. |
 | **Claude** | The weekly analysis, if you schedule it, hands Claude a file of numbers and labels (project and model names, kinds of work): no prompts, paths or session ids. Like any conversation, that file reaches the model. |
 | **Never** | No telemetry, no account, nothing sent to the authors. |
 

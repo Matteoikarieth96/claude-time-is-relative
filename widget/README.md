@@ -1,6 +1,6 @@
 # TaskETA widget
 
-A small macOS 14+ menu bar app that shows each running Claude Code task as a bar: time so far, estimate and likely range. It reads only the small JSON files the task-eta hooks write in `~/.claude/task-eta/live/` and, to show session names, the titles in the Claude desktop app's session files. It has no sandbox entitlements and is signed ad hoc on your Mac when you build it. Its only network code is the optional iPhone widget server (Settings > iPhone, off by default): it answers `GET /status` on port 8765, only to devices on one of the Mac's own networks and only with the code, for the Scriptable widget in `iphone/TaskETA.js`.
+A small macOS 14+ menu bar app that shows each running Claude Code task as a bar: time so far, estimate and likely range. It reads only the small JSON files the task-eta hooks write in `~/.claude/task-eta/live/` and, to show session names, the titles in the Claude desktop app's session files. It has no sandbox entitlements and is signed ad hoc on your Mac when you build it. Its only network code is the optional iPhone widget server (Settings > iPhone, off by default): it answers `GET /status` on port 8765, only to devices on the subnet of the Mac's Wi-Fi or Ethernet (a /16 or narrower) and only with the code; prompts and session titles go to the iPhone only if you turn that on, for the Scriptable widget in `iphone/TaskETA.js`.
 
 Install it with `install.py` (it asks), or by hand:
 

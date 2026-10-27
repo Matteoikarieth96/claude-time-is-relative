@@ -2,11 +2,13 @@
 // These must be at the very top of the file. Do not edit.
 // icon-color: deep-purple; icon-glyph: stopwatch;
 
-// TaskETA sull'iPhone: le sessioni di Claude Code del Mac, come nel pannello del Mac, lette dal
-// Mac stesso sulla stessa Wi-Fi (TaskETA.app > Impostazioni > iPhone). Fuori da quella rete il Mac
-// non si raggiunge e il widget mostra gli ultimi dati in grigio. Un solo script per tutte le
-// misure: Home piccolo, medio e grande; blocco schermo rotondo, rettangolare e in riga sopra l'ora.
-// TaskETA.app scrive qui sotto l'indirizzo e il codice del tuo Mac: non serve toccare altro.
+// TaskETA on the iPhone: the Mac's Claude Code sessions, as in the Mac's panel, read from the Mac
+// itself (TaskETA.app > Settings > iPhone). On whatever network the iPhone is on, the script asks
+// the Mac's last IP and its <name>.local, sending the code each time, over plain HTTP (unencrypted).
+// The Mac answers only devices on its own Wi-Fi or Ethernet subnet; when it does not answer, the
+// widget shows the last data in grey. One script for every size: Home small, medium and large;
+// Lock Screen circular, rectangular and inline above the time.
+// TaskETA.app writes your Mac's address and code below: nothing else to change.
 
 const MAC = "__TASKETA_URL__"       // the Mac's name on the network: follows it when its IP changes
 const MAC_IP = "__TASKETA_IP_URL__" // its IP when the script was copied: no name lookup needed
@@ -114,7 +116,10 @@ function firstAnswer(bases) {
       "indirizzo del Mac mancante: rimetti lo script dalle impostazioni")))
     let left = bases.length
     const errors = []
-    const timer = Timer.schedule(WAIT_MS, false, () => reject(new Error(T("the Mac doesn't answer within ", "il Mac non risponde entro ") + WAIT_MS / 1000 + " s")))
+    // The errors already in go with the timeout's: a 401 from one address ("code changed") wins
+    // over the other one that still hangs.
+    const timer = Timer.schedule(WAIT_MS, false, () => reject(new Error(
+      [T("the Mac doesn't answer within ", "il Mac non risponde entro ") + WAIT_MS / 1000 + " s"].concat(errors).join("; "))))
     for (const base of bases) {
       ask(base).then((data) => {
         timer.invalidate()

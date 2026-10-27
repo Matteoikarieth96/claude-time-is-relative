@@ -79,6 +79,11 @@ final class Prefs: ObservableObject {
             onPhone?(phoneOn)
         }
     }
+    /// Prompts and session titles on the iPhone: off, it gets only each task's folder, as with
+    /// prompts hidden. They cross the Wi-Fi unencrypted (plain HTTP).
+    @Published var phoneShowPrompts: Bool {
+        didSet { UserDefaults.standard.set(phoneShowPrompts, forKey: "phoneShowPrompts") }
+    }
     /// The code the iPhone widget sends with each request; a new one locks out the old scripts.
     @Published var phoneToken: String {
         didSet { UserDefaults.standard.set(phoneToken, forKey: "phoneToken") }
@@ -107,6 +112,7 @@ final class Prefs: ObservableObject {
         touchBarOn = defaults.object(forKey: "touchBarOn") as? Bool ?? false
         dwellClick = defaults.object(forKey: "dwellClick") as? Bool ?? true
         phoneOn = defaults.object(forKey: "phoneOn") as? Bool ?? false
+        phoneShowPrompts = defaults.object(forKey: "phoneShowPrompts") as? Bool ?? false
         phoneToken = defaults.string(forKey: "phoneToken") ?? Prefs.newToken()
         defaults.set(phoneToken, forKey: "phoneToken")
         readLogin()

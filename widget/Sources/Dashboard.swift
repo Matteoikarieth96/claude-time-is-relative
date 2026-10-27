@@ -1458,6 +1458,10 @@ struct SettingsView: View {
             Section(L("iPhone", "iPhone")) {
                 Toggle(L("Widget on the iPhone (same Wi-Fi as the Mac)", "Widget sull'iPhone (stessa Wi-Fi del Mac)"), isOn: $prefs.phoneOn)
                 if prefs.phoneOn {
+                    Toggle(L("Prompts and titles on the iPhone", "Prompt e titoli sull'iPhone"), isOn: $prefs.phoneShowPrompts)
+                    Text(L("Off, the iPhone gets only each task's folder. On, prompts and session titles cross the Wi-Fi unencrypted (plain HTTP): anyone on the network can read them.",
+                           "Spento, all'iPhone arriva solo la cartella di ogni task. Acceso, prompt e titoli delle sessioni passano sulla Wi-Fi in chiaro (HTTP senza cifratura): chiunque sulla rete può leggerli."))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                     ForEach([phone.note, phone.scriptNote].compactMap { $0 }, id: \.self) { note in
                         Text(note).font(.system(size: 11)).foregroundStyle(.secondary).textSelection(.enabled)
                     }

@@ -2,11 +2,13 @@ import AppKit
 import Network
 import SystemConfiguration
 
-/// The iPhone widget's source. With "iPhone sulla stessa Wi-Fi" on (off by default) a small HTTP
+/// The iPhone widget's source. With "Widget on the iPhone" on (off by default) a small HTTP
 /// server answers `GET /status` on port 8765 with the menu bar's counts and the sessions of the
 /// panel, row by row as the Mac shows them, for the Scriptable widget in widget/iphone/: the iPhone
-/// as a window on the Mac's sessions, nothing more. Only devices on one of this Mac's own networks get an
-/// answer, and only with the token: away from that Wi-Fi the iPhone cannot reach it at all.
+/// as a window on the Mac's sessions, nothing more. Only devices on the subnet of this Mac's Wi-Fi or
+/// Ethernet get an answer, and only with the code. Plain HTTP: the script tries the Mac's last IP and
+/// `<name>.local` on whatever network the iPhone is on, sending the code each time, and prompts and
+/// titles go out only if you allow them.
 final class PhoneServer: ObservableObject {
     static let port: UInt16 = 8765
     /// What the settings show under the switch: the address, or why the server is not running.
@@ -24,6 +26,10 @@ final class PhoneServer: ObservableObject {
     private var syncTimer: Timer?
     private var languageObserver: NSObjectProtocol?
     private let queue = DispatchQueue(label: "io.github.matteoikarieth96.TaskETA.phone")
+    /// Connections open, and those still waiting for their request (both only touched on `queue`).
+    private var clients = Set<ObjectIdentifier>()
+    private var awaiting = Set<ObjectIdentifier>()
+    static let maxClients = 8
 
     init(store: TaskStore, prefs: Prefs) {
         self.store = store
@@ -119,6 +125,16 @@ final class PhoneServer: ObservableObject {
         scriptState = nil
         listening = false
         serverState = nil
+        removeScript()
+    }
+
+    /// With the server off the code does not stay in iCloud Drive: TaskETA.js goes if it is ours
+    /// (a plain file with the current code in it). syncScript writes it again when the server is back on.
+    private func removeScript() {
+        let url = PhoneScript.iCloudFolder.appendingPathComponent("TaskETA.js")
+        guard isRegularFile(url.path), let text = try? String(contentsOf: url, encoding: .utf8),
+              text.contains("\"\(prefs.phoneToken)\"") else { return }
+        try? FileManager.default.removeItem(at: url)
     }
 
     private func update(_ state: NWListener.State) {
@@ -177,12 +193,27 @@ final class PhoneServer: ObservableObject {
     // MARK: - HTTP
 
     private func accept(_ connection: NWConnection) {
-        guard Self.onOwnNetwork(connection.endpoint) else {
+        guard clients.count < Self.maxClients, Self.onOwnNetwork(connection.endpoint) else {
             connection.cancel()
             return
         }
+        let id = ObjectIdentifier(connection)
+        clients.insert(id)
+        awaiting.insert(id)
+        connection.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .cancelled, .failed:
+                self?.clients.remove(id)
+                self?.awaiting.remove(id)
+            default: break
+            }
+        }
         connection.start(queue: queue)
-        // A client that never finishes its request is dropped (cancelling twice is harmless).
+        // A client that has not sent its request within 2 s is dropped, any client after 5 s
+        // (cancelling twice is harmless). Both keep the connection alive: no new one gets its id meanwhile.
+        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            if self?.awaiting.contains(id) != false { connection.cancel() }
+        }
         queue.asyncAfter(deadline: .now() + 5) { connection.cancel() }
         receive(connection, Data())
     }
@@ -193,6 +224,7 @@ final class PhoneServer: ObservableObject {
             var buffer = buffer
             if let data { buffer.append(data) }
             if let end = buffer.range(of: Data("\r\n\r\n".utf8)) {
+                self.awaiting.remove(ObjectIdentifier(connection))
                 self.respond(connection, head: String(decoding: buffer[..<end.lowerBound], as: UTF8.self))
             } else if done || error != nil || buffer.count > 16_384 {
                 connection.cancel()
@@ -248,10 +280,11 @@ final class PhoneServer: ObservableObject {
     }
 
     /// The menu bar's numbers (waiting, running, finished in the last hour) and the panel's
-    /// sessions in its order, up to 8, each as its row on the Mac: names hidden like the list's.
+    /// sessions in its order, up to 8, each as its row on the Mac: names hidden like the list's,
+    /// and always unless prompts may go to the iPhone (they cross the Wi-Fi unencrypted).
     func status() -> PhoneStatus {
         let now = store.now
-        let hide = store.hidePrompts
+        let hide = store.hidePrompts || !prefs.phoneShowPrompts
         let visible = store.visible
         let task = { (item: TaskItem) in
             PhoneTask(name: item.shownName(hidePrompts: hide), folder: item.folderText,
@@ -291,8 +324,9 @@ final class PhoneServer: ObservableObject {
 
     // MARK: - same network
 
-    /// True for a client on one of this Mac's networks: its address inside the subnet of one of
-    /// the Mac's interfaces (the Wi-Fi, Ethernet, the loopback). Anything farther gets no answer.
+    /// True for a client on one of this Mac's networks: its address inside the subnet of the Mac's
+    /// Wi-Fi or Ethernet (the `en` interfaces, as `ipAddress`). VPN tunnels, the loopback and
+    /// anything farther get no answer.
     static func onOwnNetwork(_ endpoint: NWEndpoint) -> Bool {
         guard case let .hostPort(host, _) = endpoint else { return false }
         switch host {
@@ -312,7 +346,8 @@ final class PhoneServer: ObservableObject {
         defer { freeifaddrs(list) }
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let entry = pointer.pointee
-            guard entry.ifa_flags & UInt32(IFF_UP) != 0, let addr = entry.ifa_addr, let mask = entry.ifa_netmask
+            guard entry.ifa_flags & UInt32(IFF_UP) != 0, String(cString: entry.ifa_name).hasPrefix("en"),
+                  let addr = entry.ifa_addr, let mask = entry.ifa_netmask
             else { continue }
             let family = Int32(addr.pointee.sa_family)
             let own, bits: [UInt8]
@@ -325,17 +360,27 @@ final class PhoneServer: ObservableObject {
             } else {
                 continue
             }
-            if sameSubnet(remote, own, mask: bits) { return true }
+            if sameSubnet(withoutScope(remote), withoutScope(own), mask: bits) { return true }
         }
         return false
     }
 
-    /// The two addresses agree on every bit of the mask. A mask shorter than a /8 (or /48 for
-    /// IPv6) would let half the internet in, so it never counts.
+    /// An IPv6 link-local address (fe80::/10) without the interface index macOS keeps in bytes 2-3
+    /// of its own: with it, the Mac's address never matched an iPhone's.
+    static func withoutScope(_ address: [UInt8]) -> [UInt8] {
+        guard address.count == 16, address[0] == 0xfe, address[1] & 0xc0 == 0x80 else { return address }
+        var out = address
+        out[2] = 0
+        out[3] = 0
+        return out
+    }
+
+    /// The two addresses agree on every bit of the mask. A mask wider than a /16 (or /64 for
+    /// IPv6), like a big company network's, lets too many in, so it never counts.
     static func sameSubnet(_ a: [UInt8], _ b: [UInt8], mask: [UInt8]) -> Bool {
         guard a.count == b.count, mask.count == a.count else { return false }
         let prefix = mask.reduce(0) { $0 + $1.nonzeroBitCount }
-        guard prefix >= (a.count == 4 ? 8 : 48) else { return false }
+        guard prefix >= (a.count == 4 ? 16 : 64) else { return false }
         return zip(zip(a, b), mask).allSatisfy { pair, m in pair.0 & m == pair.1 & m }
     }
 }
