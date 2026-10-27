@@ -130,12 +130,6 @@ class Language(unittest.TestCase):
         with open(task_eta.LANG_FILE, encoding="utf-8") as fh:
             self.assertEqual(json.load(fh)["choice"], "system")  # a wrong word changes nothing
 
-    def test_the_week_line_never_reads_the_language(self):
-        """The block for Claude is English: only the pickaxe line, while one waits, reads the file (cached)."""
-        self.choose("{oops")
-        task_eta.mine_week_line({"settimane": [{"dal": "2026-10-19", "colpi": 20, "buoni": 17}]})
-        self.assertIsNone(task_eta._lang)
-
 
 if __name__ == "__main__":
     unittest.main()

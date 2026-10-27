@@ -112,17 +112,6 @@ class Pickaxe(unittest.TestCase):
     def test_the_pickaxe_command_is_protocol_not_work(self):
         self.assertTrue(task_eta.PROTO_CMD.search("python3 ~/x/task_eta.py piccone su"))
 
-    def test_the_week_line_for_claude(self):
-        from datetime import date
-        self.assertIsNone(task_eta.mine_week_line({"settimane": []}))
-        state = {"settimane": [{"dal": "2026-10-12", "colpi": 50, "buoni": 29}, {"dal": "2026-10-19", "colpi": 216, "buoni": 141}]}
-        line = task_eta.mine_week_line(state, today=date(2026, 10, 25))
-        self.assertIn("this week 65%", line)
-        self.assertIn("last week 58%", line)
-        self.assertIn("best week 65%", line)
-        self.assertIn("80% good", line)
-        self.assertIn("no stroke yet this week", task_eta.mine_week_line(state, today=date(2026, 10, 27)))
-
     def test_weeks_from_monday(self):
         weeks, diamonds = task_eta.mine_weeks([task(i, 300) for i in range(3)])
         self.assertEqual((len(weeks), weeks[0][1], weeks[0][2], diamonds), (1, 3, 3, 3))

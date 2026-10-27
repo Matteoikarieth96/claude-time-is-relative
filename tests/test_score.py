@@ -58,6 +58,20 @@ class Score(unittest.TestCase):
         self.assertEqual((s["n"], s["inside"], s["hit"], s["short"], s["long"]), (4, 2, 1, 1, 1))
         self.assertEqual((s["streak"], s["best"], s["scored"]), (0, 2, 4))
 
+    def test_an_offer_made_for_another_model_is_not_used(self):
+        # First prompt of a session whose model the hook did not know: it logged Opus's offer, the
+        # task ran on Sonnet. Not scored. The same model, with or without "claude-", is.
+        made = {"c": [(T0 + 0.3, QUICK, None, "opus-5-5"), (T0 + 600.3, QUICK, None, "claude-sonnet-5-5"),
+                      (T0 + 1200.3, QUICK, None, None)]}
+        tasks = [task(0, 62, model="sonnet-5-5"), task(1, 62, model="sonnet-5-5"), task(2, 62, model="sonnet-5-5")]
+        self.assertEqual(task_eta.claude_score(tasks, made)["scored"], 2)
+
+    def test_the_closest_offer_is_found_in_a_long_session(self):
+        many = {"c": [(T0 + k * 30.0, QUICK, None) for k in range(3000, -1, -1)]}  # not in order
+        found = task_eta.offer_for({"session": "c", "start_ts": T0 + 6000.4}, many)
+        self.assertEqual(found[0], T0 + 6000.0)
+        self.assertIsNone(task_eta.offer_for({"session": "c", "start_ts": T0 - 100}, many))
+
     def test_left_out_stopped_tests_unknown_kind_and_no_offer(self):
         tasks = [task(0, 62), task(1, 62, interrupted=True), task(2, 62, file="/x/-private-tmp-run/a.jsonl"),
                  task(3, 62, kind=None), task(4, 62, session="other"), task(5, 62, estimate_min=None),
