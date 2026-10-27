@@ -14,7 +14,7 @@ ENCODED_HOME = re.compile(r"-(Users|home)-[A-Za-z][\w.]*-", re.I)
 SECRET = re.compile(r"(sk-ant-[\w-]{10,}|sk-[A-Za-z0-9]{32,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}"
                     r"|AKIA[0-9A-Z]{16}|xox[abpr]-[\w-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
 SESSION_ID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
-TEXT_EXT = (".py", ".md", ".swift", ".sh", ".plist", ".yml", ".yaml", ".json", ".html", ".svg", ".txt", ".cfg")
+TEXT_EXT = (".py", ".md", ".swift", ".sh", ".plist", ".yml", ".yaml", ".json", ".html", ".svg", ".txt", ".cfg", ".js")
 
 
 def published_files():
@@ -41,8 +41,11 @@ class NoPrivateData(unittest.TestCase):
                 continue
             with open(os.path.join(REPO, rel), encoding="utf-8", errors="replace") as fh:
                 text = fh.read()
+            # A font's licence ships word for word, its authors' addresses included (SIL OFL): only
+            # fonts/OFL*.txt is exempt, and only from the email check.
+            licence = os.path.basename(os.path.dirname(rel)) == "fonts" and re.fullmatch(r"OFL[\w.-]*\.txt", os.path.basename(rel))
             for email in EMAIL.findall(text):
-                if not ALLOWED_EMAIL.search(email):
+                if not ALLOWED_EMAIL.search(email) and not licence:
                     problems.append("%s: email %s" % (rel, email))
             problems += ["%s: home path %s" % (rel, m.group(0)) for m in HOME_PATH.finditer(text)]
             problems += ["%s: encoded home path %s" % (rel, m.group(0)) for m in ENCODED_HOME.finditer(text)]

@@ -36,3 +36,6 @@ popover.png
 
 # Working folder of a test that must not be under /tmp (removed after the test)
 tests/r8-work-*/
+# Minecraft's icons are Mojang's: they live in ~/.claude/task-eta/minerali, never here
+widget/miniera/**/*.png
+widget/miniera/**/*.webp

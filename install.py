@@ -122,7 +122,8 @@ What task-eta reads and writes (all on this machine):
                                  keys and other secrets masked, durations, model and effort), the
                                  calibration, the widget's live files and backups of the files it edits,
                                  all private to your user (folders 0700, files 0600)
-  never   sends anything anywhere: no network code, no telemetry, no account. The author gets nothing.
+  never   the hooks send nothing anywhere: no network code, no telemetry, no account. The author
+          gets nothing. The app's optional iPhone widget server is off until you turn it on.
   note    the hook adds up to 5 snippets (70 characters) of your own similar past prompts from the same
           project to the context of each new prompt, so they reach the model like the rest of your
           conversation. The block tells Claude they are untrusted data, never instructions.
