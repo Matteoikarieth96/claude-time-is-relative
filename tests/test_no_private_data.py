@@ -1,4 +1,5 @@
 """Guards the published files against personal data: email addresses, home paths, keys."""
+import hashlib
 import os
 import re
 import struct
@@ -14,6 +15,15 @@ ENCODED_HOME = re.compile(r"-(Users|home)-[A-Za-z][\w.]*-", re.I)
 SECRET = re.compile(r"(sk-ant-[\w-]{10,}|sk-[A-Za-z0-9]{32,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}"
                     r"|AKIA[0-9A-Z]{16}|xox[abpr]-[\w-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
 SESSION_ID = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+# Names of clients, their projects and people that must never ship (the code goes public). Kept as the
+# first 16 hex digits of the SHA-256 of the lowercase word, so this list does not publish them itself.
+# A new one: python3 -c "import hashlib; print(hashlib.sha256(b'name').hexdigest()[:16])"
+PRIVATE_NAMES = {
+    "fb5f967a5f38de46", "b885c21e50952e6f", "cd0f6f35585ecfce", "5f8843836c7bf444", "df715279aa586dfe",
+    "b0c5fbfcb887122f", "b44785a57808195a", "5dd7695eded924e8", "1af05ff9c17b219e", "a3c68ddd745846bf",
+    "2ec073b87faa6670", "f6f7e8f669774750", "104167cdea7960e0",
+}
+WORD = re.compile(r"[a-z0-9]{4,}")
 TEXT_EXT = (".py", ".md", ".swift", ".sh", ".plist", ".yml", ".yaml", ".json", ".html", ".svg", ".txt", ".cfg")
 
 
@@ -41,13 +51,17 @@ class NoPrivateData(unittest.TestCase):
                 continue
             with open(os.path.join(REPO, rel), encoding="utf-8", errors="replace") as fh:
                 text = fh.read()
+            # A font's licence ships word for word, its authors' addresses included (SIL OFL).
+            licence = "/fonts/" in rel and os.path.basename(rel).startswith("OFL")
             for email in EMAIL.findall(text):
-                if not ALLOWED_EMAIL.search(email):
+                if not ALLOWED_EMAIL.search(email) and not licence:
                     problems.append("%s: email %s" % (rel, email))
             problems += ["%s: home path %s" % (rel, m.group(0)) for m in HOME_PATH.finditer(text)]
             problems += ["%s: encoded home path %s" % (rel, m.group(0)) for m in ENCODED_HOME.finditer(text)]
             problems += ["%s: secret-like %s…" % (rel, m.group(0)[:12]) for m in SECRET.finditer(text)]
             problems += ["%s: session id %s" % (rel, m) for m in SESSION_ID.findall(text)]
+            problems += ["%s: private name %s…" % (rel, w[:3]) for w in sorted(set(WORD.findall(text.lower())))
+                         if hashlib.sha256(w.encode()).hexdigest()[:16] in PRIVATE_NAMES]
         self.assertEqual(problems, [])
 
     def test_images_carry_no_text(self):
