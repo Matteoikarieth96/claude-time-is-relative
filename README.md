@@ -77,6 +77,10 @@ TaskETA lives in the menu bar: a tick and the number of tasks finished in the la
 
 Example data. Green: on time. Yellow: past the estimate. Red: past the likely range. Grey: quiet for 15 minutes.
 
+#### Gaming Mode
+
+Want the widget as a game? The [`gaming-mode`](https://github.com/Matteoikarieth96/claude-time-is-relative/tree/gaming-mode) branch is a gamified variant of TaskETA, contributed by [@smazzolo](https://github.com/smazzolo): a Minecraft-style mine where every estimate is a pickaxe stroke and its accuracy decides the find, a mini golf easter egg, a level map in a dashboard, and an optional iPhone widget. It lives on its own branch, apart from `main`, because it does more: the iPhone widget talks to your Mac over your local network, so read [what it adds and what it changes for privacy](https://github.com/Matteoikarieth96/claude-time-is-relative/blob/gaming-mode/GAMING-MODE.md) before you install it. To try it, install from that branch: `git clone --branch gaming-mode https://github.com/Matteoikarieth96/claude-time-is-relative.git`.
+
 ## How accurate is it
 
 ![Claude's time estimates are closing the gap: live estimates by version](docs/live-gap.png)
