@@ -6,11 +6,10 @@ import SwiftUI
 // shown in the dashboard. See widget/insights/README.md.
 
 struct WeeklyInsights: Codable, Equatable {
-    struct Item: Codable, Equatable, Identifiable {
+    struct Item: Codable, Equatable {
         var title: String
         var body: String
         var kind: String?   // trend, record, tip, warning
-        var id: String { title }
     }
 
     var v: Int?
@@ -56,6 +55,8 @@ struct InsightsWidget: View {
     let insights: WeeklyInsights?
     let size: WidgetSize
     @State private var open = false
+    /// The pointer is on the icon and the hand cursor is pushed: popped once, on leaving or on disappearing.
+    @State private var hand = false
 
     var body: some View {
         WidgetChrome(role: .plate, title: L("Weekly analysis", "Analisi della settimana"),
@@ -75,7 +76,14 @@ struct InsightsWidget: View {
                     .contentShape(Circle())
                     .onHover { inside in
                         if inside { open = true }
-                        inside ? NSCursor.pointingHand.push() : NSCursor.pop()
+                        if inside != hand {
+                            inside ? NSCursor.pointingHand.push() : NSCursor.pop()
+                            hand = inside
+                        }
+                    }
+                    .onDisappear {
+                        if hand { NSCursor.pop() }
+                        hand = false
                     }
                     .onTapGesture { open = true }
                     .help(L("Read the analysis", "Leggi l'analisi"))
@@ -90,7 +98,8 @@ struct InsightsWidget: View {
                         .lineLimit(size.height >= 2 ? 3 : 2)
                         .fixedSize(horizontal: false, vertical: true)
                     if size.height >= 2 {
-                        ForEach(ins.items.prefix(4)) { item in
+                        // By position: two points may share a title.
+                        ForEach(Array(ins.items.prefix(4).enumerated()), id: \.offset) { _, item in
                             Label(item.title, systemImage: item.symbol)
                                 .font(.system(size: 12))
                                 .lineLimit(1)
@@ -128,7 +137,7 @@ struct InsightsDetail: View {
                 if let period = insights.period {
                     Text(period).font(.system(size: 11)).foregroundStyle(.secondary)
                 }
-                ForEach(insights.items) { item in
+                ForEach(Array(insights.items.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .top, spacing: 10) {
                         Text(item.emoji).font(.system(size: 18))
                         VStack(alignment: .leading, spacing: 3) {

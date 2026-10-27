@@ -39,6 +39,8 @@ struct MinigolfPlate: View {
     let played: Int
     var stats = GolfStats.forDashboard()
     var scrolls = false
+    /// Draws again when a new engine is ready (the power club).
+    @ObservedObject private var campo = CampoNow.shared
 
     var body: some View {
         let locked = MinigolfCard.isLocked(store, stats)
@@ -177,7 +179,7 @@ struct MinigolfCard: View {
                         row(L("Cushions", "Sponde"), height: 22, next: next, s) { i in
                             if i < card.shots.count, card.shots[i] > 0 {
                                 // Off an exact hole's number: red, minus 50 points a cushion.
-                                Text("\(card.cushions[i])").font(CampoFont.display(12, .semibold))
+                                Text("\(card.cushions.indices.contains(i) ? card.cushions[i] : 0)").font(CampoFont.display(12, .semibold))
                                     .foregroundStyle(card.offBy(hole: i + 1) > 0 ? s.flag : s.muted)
                             }
                         }

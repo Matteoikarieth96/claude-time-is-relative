@@ -625,7 +625,7 @@ html.embed, .embed body { height: 100%; margin: 0; overflow: hidden; }
     ice: 200, pool: 888,
     clean: 63, doom: T('10 minutes in 32 games this week', '10 minuti in 32 partite questa settimana'), restart: 36,
     phone: { synced: T('at 5:13 PM', 'alle 17:13'), note: T('The small changes from 5:17 PM arrive on their own with the next installed build.', 'Le piccole modifiche delle 17:17 arrivano da sole alla prossima build installata.') },
-    ai: { inside: 12, hit: 8, short: 5, long: 1, run: 4, bestRun: 9, best: 15, share: 62, shortAll: 26, longAll: 12, trend: T('from 55% to 69%', 'dal 55% al 69%') }
+    ai: { n: 18, inside: 12, hit: 8, short: 5, long: 1, run: 4, bestRun: 9, best: 15, share: 62, shortAll: 26, longAll: 12, trend: T('from 55% to 69%', 'dal 55% al 69%') }
   };
 
   // The game's mood (GameMood.swift in the app): the same results named as on a golf score card, or as gems.
@@ -678,10 +678,13 @@ html.embed, .embed body { height: 100%; margin: 0; overflow: hidden; }
   document.getElementById('at').textContent = DATA.at;
   // In the app the footer is hidden: the time of the numbers goes at the end of the hint.
   if (DATA.embed) document.querySelector('.hint').insertAdjacentHTML('beforeend', '<span>' + T('Numbers ', 'Numeri ') + esc(DATA.atShort || DATA.at) + '.</span>');
-  document.getElementById('ailed').textContent = DATA.ai.inside + '/18';
+  // Over the estimates scored in the last 18 (fewer at the start); a dash with none yet.
+  var aiN = DATA.ai.n != null ? DATA.ai.n : 18;
+  document.getElementById('ailed').textContent = aiN ? DATA.ai.inside + '/' + aiN : '–';
 
   // Bushes, placed where no fairway passes. Each hides a secret: a click shakes it, the find pops out
-  // and its card opens. What you found stays in this browser; nothing moves until you click.
+  // and its card opens. In a browser what you found stays there; in the app (a web view that keeps
+  // nothing on disk) it lasts only while the map is open. Nothing moves until you click.
   var trees = [[330, 540, 15], [520, 540, 17], [760, 556, 15], [380, 418, 18], [220, 250, 16], [470, 186, 13],
     [860, 206, 16], [60, 420, 14], [940, 618, 14], [80, 210, 24], [640, 520, 12], [300, 410, 12]];
   // ← one secret per bush, in the same order: title, card text, what pops out (a key of LOOT).
@@ -764,7 +767,7 @@ html.embed, .embed body { height: 100%; margin: 0; overflow: hidden; }
   var stateName = label;
   function holeCard(h) {
     var green = h.s === 'now'
-      ? '<p class="small">' + T('Green at ', 'Green a ') + n(h.g) + T(' points · you have ', ' punti · ne hai ') + n(DATA.points) + T(', ', ', ne mancano ') + n(h.g - DATA.points) + T(' to go', '') + '</p><div class="bar"><i style="width:' + (share * 100).toFixed(1) + '%"></i></div>'
+      ? '<p class="small">' + T('Green at ', 'Green a ') + n(h.g) + T(' points · you have ', ' punti · ne hai ') + n(DATA.points) + T(', ', ', ne mancano ') + n(Math.max(0, h.g - DATA.points)) + T(' to go', '') + '</p><div class="bar"><i style="width:' + (share * 100).toFixed(1) + '%"></i></div>'
       : '<p class="small">' + T('Green at ', 'Green a ') + n(h.g) + T(' points', ' punti') + '</p>';
     return '<div class="row"><span class="eyebrow">' + T('Hole ', 'Buca ') + h.n + ' · ' + h.z + '</span><span class="state ' + h.s + '">' + stateName[h.s] + '</span></div>' +
       '<h3>' + esc(h.t) + '</h3>' + green + trialList(h.tr) + powerBlock(h.pw);
@@ -779,8 +782,8 @@ html.embed, .embed body { height: 100%; margin: 0; overflow: hidden; }
       var a = DATA.ai;
       return '<div class="row"><span class="eyebrow">' + T('Claude’s scoreboard', 'Segnapunti di Claude') + '</span><span class="tag new" style="margin:0">' + T('new', 'nuovo') + '</span></div><h3>' + T('Claude plays too', 'Anche Claude gioca') + '</h3>' +
         '<p>' + T('The game scores Claude’s estimates too: it’s a player as well. One extra line in the hook shows it its score at every prompt, like a scoreboard.', 'Il gioco dà un voto alle stime di Claude: il giocatore è anche lui. Una riga in più nell\'hook gli fa vedere il suo punteggio a ogni prompt, come un tabellone.') + '</p>' +
-        '<dl class="kv"><dt>' + T('Last 18', 'Ultime 18') + '</dt><dd>' + a.inside + T(' in range (', ' dentro la forchetta (') + a.hit + T(' spot on), ', ' centrate), ') + a.short + T(' too short, ', a.short === 1 ? ' troppo corta, ' : ' troppo corte, ') + a.long + T(' too long', a.long === 1 ? ' troppo lunga' : ' troppo lunghe') + '</dd>' +
-        '<dt>' + T('Best', 'Record') + '</dt><dd>' + a.best + T(' of 18; streak ', ' su 18; serie ') + a.run + T(', best ', ', record ') + a.bestRun + '</dd>' +
+        '<dl class="kv"><dt>' + T('Last ', 'Ultime ') + aiN + '</dt><dd>' + a.inside + T(' in range (', ' dentro la forchetta (') + a.hit + T(' spot on), ', ' centrate), ') + a.short + T(' too short, ', a.short === 1 ? ' troppo corta, ' : ' troppo corte, ') + a.long + T(' too long', a.long === 1 ? ' troppo lunga' : ' troppo lunghe') + '</dd>' +
+        '<dt>' + T('Best', 'Record') + '</dt><dd>' + a.best + T(' of ', ' su ') + aiN + T('; streak ', '; serie ') + a.run + T(', best ', ', record ') + a.bestRun + '</dd>' +
         '<dt>' + T('Overall', 'In tutto') + '</dt><dd>' + a.share + T('% in range, ', '% dentro, ') + a.shortAll + T('% short, ', '% corte, ') + a.longAll + T('% long', '% lunghe') + '</dd>' +
         '<dt>' + T('Trend', 'Andamento') + '</dt><dd>' + a.trend + T(' in range, first half to second half', ' dentro, prima e seconda metà') + '</dd></dl>' +
         '<p class="small">' + T('For Claude even ', 'Per Claude anche ') + M.fast + T(' is a miss: an estimate that was too cautious. The range is the hook’s, and it measures the estimate, not the work. It costs one line per prompt, on by default: <code>task_eta.py score off</code> turns it off.', ' è un errore: una stima troppo prudente. La forchetta è quella dell\'hook, e si misura la stima, non il lavoro. Costa una riga a prompt, accesa di base: <code>task_eta.py score off</code> la spegne.') + '</p>';
@@ -836,7 +839,7 @@ html.embed, .embed body { height: 100%; margin: 0; overflow: hidden; }
     here: function () {
       var owned = DATA.holes.filter(function (h) { return h.s === 'done'; }).map(function (h) { return h.pw[0]; });
       return '<span class="eyebrow">' + T('Sign · ', 'Tabellone · ') + DATA.at + '</span><h3>' + T('Where you are', 'Dove sei') + '</h3><dl class="kv">' +
-        '<dt>' + T('Hole', 'Buca') + '</dt><dd>' + cur.n + ' · ' + esc(cur.t) + ', ' + n(cur.g - DATA.points) + T(' points to the green', ' punti al green') + '</dd>' +
+        '<dt>' + T('Hole', 'Buca') + '</dt><dd>' + cur.n + ' · ' + esc(cur.t) + ', ' + n(Math.max(0, cur.g - DATA.points)) + T(' points to the green', ' punti al green') + '</dd>' +
         '<dt>' + T('Title', 'Titolo') + '</dt><dd>' + esc(DATA.title) + '</dd>' +
         '<dt>' + T('Points', 'Punti') + '</dt><dd>' + n(DATA.points) + '</dd>' +
         '<dt>' + T('Holes played', 'Buche fatte') + '</dt><dd>' + DATA.played + ', ' + Math.max(0, DATA.ice - DATA.played) + T(' to the ice', ' al ghiaccio') + '</dd>' +

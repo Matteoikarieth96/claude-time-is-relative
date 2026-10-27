@@ -32,11 +32,46 @@ struct HookOffer {
     let kinds: [String: Line]
     /// The "with brief subagents" line, when the block had one.
     let brief: Line?
+    /// The model the hook estimated for, when the log says.
+    var model: String? = nil
 
-    /// The offers by session, oldest first. Bad lines are skipped.
-    static func load(_ url: URL) -> [String: [HookOffer]] {
-        guard isRegularFile(url.path), let data = try? Data(contentsOf: url) else { return [:] }
-        return parse(data)
+    /// The hook's log, next to the index.
+    static var logURL: URL { TaskStore.indexURL.deletingLastPathComponent().appendingPathComponent("suggestions.jsonl") }
+
+    /// Bytes of the log read, as task_eta.py's SCORE_TAIL: the last ones of the log, then of the
+    /// rotated .old file for what is left.
+    static let tail = 256 * 1024
+
+    /// The offers by session, oldest first, as hook_offers in task_eta.py. Bad lines are skipped.
+    static func load(_ url: URL, tail: Int = HookOffer.tail) -> [String: [HookOffer]] {
+        var budget = tail
+        var chunks: [Data] = []
+        for path in [url.path, url.path + ".old"] where budget > 0 {
+            // Never through a link, and never a FIFO or a device: non-blocking, then only a plain file.
+            let fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW)
+            guard fd >= 0 else { continue }
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            defer { try? handle.close() }
+            var st = stat()
+            guard fstat(fd, &st) == 0, st.st_mode & S_IFMT == S_IFREG else { continue }
+            let size = Int(st.st_size)
+            guard (try? handle.seek(toOffset: UInt64(max(0, size - budget)))) != nil,
+                  let data = try? handle.read(upToCount: budget) else { continue }
+            if size > budget {
+                // The first line is cut in two: dropped.
+                guard let cut = data.firstIndex(of: UInt8(ascii: "\n")) else { budget -= data.count; continue }
+                chunks.append(data[data.index(after: cut)...])
+            } else {
+                chunks.append(data)
+            }
+            budget -= data.count
+        }
+        var all = Data()
+        for chunk in chunks.reversed() {   // the .old file's lines first
+            all.append(chunk)
+            all.append(UInt8(ascii: "\n"))
+        }
+        return parse(all)
     }
 
     static func parse(_ data: Data) -> [String: [HookOffer]] {
@@ -47,7 +82,8 @@ struct HookOffer {
                   let kinds = o["kinds"] as? [String: Any] else { continue }
             var lines: [String: Line] = [:]
             for (k, v) in kinds { if let line = HookOffer.line(v) { lines[k] = line } }
-            out[session, default: []].append(HookOffer(ts: ts, kinds: lines, brief: HookOffer.line(o["brief"])))
+            out[session, default: []].append(HookOffer(ts: ts, kinds: lines, brief: HookOffer.line(o["brief"]),
+                                                       model: o["model"] as? String))
         }
         return out
     }
@@ -61,11 +97,21 @@ struct HookOffer {
     }
 
     /// The offer for a task: same session, made within a minute of its prompt (the hook runs as the
-    /// prompt is sent, so it is ~0.3 s off), the closest one.
+    /// prompt is sent, so it is ~0.3 s off), the closest one. Nil when that one was made for another
+    /// model than the task's (both known): never another offer in its place.
     static func of(_ task: PastTask, in offers: [String: [HookOffer]]) -> HookOffer? {
-        guard let session = task.session, let list = offers[session] else { return nil }
-        return list.filter { $0.ts - task.start >= -10 && $0.ts - task.start <= 60 }
-            .min { abs($0.ts - task.start) < abs($1.ts - task.start) }
+        guard let session = task.session, let list = offers[session],
+              let offer = list.filter({ $0.ts - task.start >= -10 && $0.ts - task.start <= 60 })
+                .min(by: { abs($0.ts - task.start) < abs($1.ts - task.start) }) else { return nil }
+        // PastTask.model is "model effort"; a model name always has a digit, an effort never.
+        let word = task.model.split(separator: " ").first.map(String.init) ?? ""
+        let mine = bare(word.contains(where: \.isNumber) ? word : ""), theirs = bare(offer.model ?? "")
+        return !mine.isEmpty && !theirs.isEmpty && mine != theirs ? nil : offer
+    }
+
+    /// "claude-opus-5-5" and "opus-5-5" are the same model.
+    private static func bare(_ model: String) -> String {
+        model.hasPrefix("claude-") ? String(model.dropFirst("claude-".count)) : model
     }
 }
 
@@ -446,19 +492,45 @@ private extension String {
 
 /// The engine of the index on disk, made again only when the index or the hook's log changes (or
 /// the day does): the mini golf reads its powers here when a game starts, the dashboard its card.
-final class CampoNow {
+/// When only those change, the 1-2 MB index is parsed away from the main thread and the last engine
+/// is returned meanwhile; `version` then tells the views to draw again. The first time, and on a
+/// new language or mood (the engine's words), it is made at once. Called on the main thread.
+final class CampoNow: ObservableObject, @unchecked Sendable {
     static let shared = CampoNow()
-    private var key = ""
+    private var words = ""
+    private var stamps = ""
     private var cached: CampoEngine?
+    /// The stamps of the engine being made in the background, if any.
+    private var wanted = ""
+    @Published private(set) var version = 0
 
     static var indexURL: URL { TaskStore.indexURL }
 
     func engine(_ index: URL = CampoNow.indexURL) -> CampoEngine {
         let offers = index.deletingLastPathComponent().appendingPathComponent("suggestions.jsonl")
-        let k = "\(Loc.lang.rawValue)|\(GameMood.current.rawValue)|\(fileStamp(index.path))|\(fileStamp(offers.path))|\(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)"
-        if let cached, k == key { return cached }
+        let w = "\(Loc.lang.rawValue)|\(GameMood.current.rawValue)"
+        let s = "\(index.path)|\(fileStamp(index.path))|\(fileStamp(offers.path))|\(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)"
+        if let cached, w == words {
+            if s != stamps, s != wanted {
+                wanted = s
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let engine = CampoEngine(PastTask.load(from: index), offers: HookOffer.load(offers))
+                    DispatchQueue.main.async {
+                        // A newer one on its way, or the words changed meanwhile: this one is dropped.
+                        guard self.wanted == s, self.words == w else { return }
+                        self.wanted = ""
+                        self.stamps = s
+                        self.cached = engine
+                        self.version += 1
+                    }
+                }
+            }
+            return cached
+        }
         let engine = CampoEngine(PastTask.load(from: index), offers: HookOffer.load(offers))
-        key = k
+        words = w
+        stamps = s
+        wanted = ""
         cached = engine
         return engine
     }
@@ -473,6 +545,8 @@ struct CampoGameCard: View {
     @Environment(\.colorScheme) private var scheme
     /// Read so the card draws again when the mood changes: the engine's words follow it.
     @AppStorage(GameMood.key) private var moodRaw = GameMood.fallback.rawValue
+    /// And when a new engine is ready.
+    @ObservedObject private var campo = CampoNow.shared
 
     var body: some View {
         let _ = moodRaw
@@ -627,13 +701,22 @@ enum CampoEngineTest {
         check(ClaudeScore.mark(real: 330, (300, nil, nil)) == .inside && ClaudeScore.mark(real: 451, (300, nil, nil)) == .short
               && ClaudeScore.mark(real: 323, (300, 200, 450)) == .hit && ClaudeScore.mark(real: 15, (10, 5, 12)) == .hit, "claude mark")
         let line = Data("""
-        {"ts": 1.5, "session": "a", "kinds": {"quick": [29, 19, 45], "agents": [2041, null, null]}, "brief": null}
+        {"ts": 1.5, "session": "a", "kinds": {"quick": [29, 19, 45], "agents": [2041, null, null]}, "brief": null, "model": "claude-opus-5-5"}
         not json
         {"ts": 2, "session": "a", "kinds": {"medium": [120, 60, "x"]}}
         """.utf8)
         let parsed = HookOffer.parse(line)["a"] ?? []
         check(parsed.count == 2 && parsed[0].kinds["quick"]?.low == 19 && parsed[0].kinds["agents"]?.low == nil
-              && parsed[1].kinds["medium"]?.est == 120 && parsed[1].kinds["medium"]?.high == nil, "hook offers parse")
+              && parsed[1].kinds["medium"]?.est == 120 && parsed[1].kinds["medium"]?.high == nil
+              && parsed[0].model == "claude-opus-5-5" && parsed[1].model == nil, "hook offers parse")
+        // An offer made for another model is not the task's, and no other offer takes its place;
+        // "claude-" in front does not make it another model.
+        func offer(_ ts: Double, _ model: String?) -> HookOffer { HookOffer(ts: t0 + ts, kinds: ["quick": (300, 200, 450)], brief: nil, model: model) }
+        let opus = PastTask(id: "m0", start: t0, real: 310, estimate: 300, range: nil, model: "opus-5-5 high",
+                            project: "p", prompt: "", session: "m", kind: "quick")
+        check(ClaudeScore([opus], offers: ["m": [offer(0.3, "claude-sonnet-5"), offer(5, "claude-opus-5-5")]]).marks.isEmpty
+              && ClaudeScore([opus], offers: ["m": [offer(0.3, "claude-opus-5-5")]]).marks == [.hit]
+              && ClaudeScore([opus], offers: ["m": [offer(0.3, nil)]]).marks == [.hit], "claude offer of another model")
         return out
     }
 }

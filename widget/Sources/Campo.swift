@@ -318,7 +318,8 @@ struct CampoData: Encodable {
     struct Hole: Encodable { let n: Int; let t: String; let z: String; let g: Int; let s: String; let tr: [[String]]; let pw: [String] }
     struct Phone: Encodable { let synced: String?; let note: String }
     struct Claude: Encodable {
-        let inside, hit, short, long, run, bestRun, best, share, shortAll, longAll: Int
+        /// n: the estimates scored in the last 18 (fewer at the start).
+        let n, inside, hit, short, long, run, bestRun, best, share, shortAll, longAll: Int
         let trend: String
     }
 
@@ -353,7 +354,8 @@ struct CampoData: Encodable {
         (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? "null"
     }
 
-    static func make(_ tasks: [PastTask], golf: [GolfRecord], phone: Phone, now: Date = Date()) -> CampoData {
+    static func make(_ tasks: [PastTask], golf: [GolfRecord], phone: Phone, offers: [String: [HookOffer]] = [:],
+                     now: Date = Date()) -> CampoData {
         let gems = GemStats(tasks, now: now)
         let game = CampoGame(tasks, points: gems.points, now: now)
         let course = game.course()
@@ -388,31 +390,23 @@ struct CampoData: Encodable {
                                       toPar: signed(round.holes.reduce(0) { $0 + CampoHole.toPar($1.gem) }, par: true)),
                          nowHole: current + 1, prevGreen: prevGreen, holes: holes,
                          clean: played == 0 ? 0 : percent(Double(game.holes.filter(\.isClean).count) / Double(played)),
-                         doom: doom, restart: restartShare(tasks), phone: phone, ai: claude(game.holes),
+                         doom: doom, restart: restartShare(tasks), phone: phone, ai: claude(ClaudeScore(tasks, offers: offers)),
                          eta: eta(gems, green: nowIndex.map { course[$0].rule } , now: now))
     }
 
-    /// Claude's own score on its estimates: inside the range (diamond or emerald), too short (pebble),
-    /// too long (sapphire), the last 18 and in all.
-    static func claude(_ holes: [CampoHole]) -> Claude {
-        let inside = { (h: CampoHole) in h.gem == .diamond || h.gem == .emerald }
-        let last = Array(holes.suffix(CampoCourse.round))
-        let n = Double(max(holes.count, 1))
-        let half = holes.count / 2
-        let first = holes.prefix(half), second = holes.dropFirst(half)
-        func share(_ s: ArraySlice<CampoHole>) -> Int { s.isEmpty ? 0 : percent(Double(s.filter(inside).count) / Double(s.count)) }
-        var best = last.filter(inside).count
-        if holes.count > CampoCourse.round {
-            for i in 0...(holes.count - CampoCourse.round) {
-                best = max(best, holes[i..<(i + CampoCourse.round)].filter(inside).count)
-            }
-        }
-        return Claude(inside: last.filter(inside).count, hit: last.filter { $0.gem == .diamond }.count,
-                      short: last.filter { $0.gem == .pebble }.count, long: last.filter { $0.gem == .sapphire }.count,
-                      run: holes.reversed().prefix(while: inside).count, bestRun: CampoGame.bestRun(holes, inside), best: best,
-                      share: percent(Double(holes.filter(inside).count) / n),
-                      shortAll: percent(Double(holes.filter { $0.gem == .pebble }.count) / n),
-                      longAll: percent(Double(holes.filter { $0.gem == .sapphire }.count) / n),
+    /// Claude's own score on its estimates, the same as the dashboard's card (ClaudeScore: against
+    /// the range the hook offered): inside it (spot on included), too short, too long, the last 18 and in all.
+    static func claude(_ score: ClaudeScore) -> Claude {
+        let marks = score.marks
+        let n = Double(max(marks.count, 1))
+        let half = marks.count / 2
+        let first = marks.prefix(half), second = marks.dropFirst(half)
+        func share(_ s: ArraySlice<ClaudeScore.Mark>) -> Int { s.isEmpty ? 0 : percent(Double(s.filter(\.isInside).count) / Double(s.count)) }
+        return Claude(n: score.last.count, inside: score.inside, hit: score.hits, short: score.short, long: score.long,
+                      run: score.streak, bestRun: CampoGame.bestRun(marks) { $0.isInside }, best: score.best,
+                      share: percent(Double(marks.filter(\.isInside).count) / n),
+                      shortAll: percent(Double(marks.filter { $0 == .short }.count) / n),
+                      longAll: percent(Double(marks.filter { $0 == .long }.count) / n),
                       trend: L("from \(share(first))% to \(share(second))%", "dal \(share(first))% al \(share(second))%"))
     }
 
@@ -572,6 +566,11 @@ struct CampoMapView: NSViewRepresentable {
         var json = ""
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { webView.isHidden = false }
+        // A page that failed is shown too: never a map hidden for good.
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { webView.isHidden = false }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            webView.isHidden = false
+        }
 
         /// Only the page itself opens here; a link opens in the browser.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
@@ -590,16 +589,20 @@ struct CampoMapView: NSViewRepresentable {
     }
 }
 
-/// The numbers of the page, worked out again only when the index read changes.
+/// The numbers of the page, worked out again only when what they come from changes: the index read,
+/// the day ("today" on the page), the mini golf's games, the iPhone line and the hook's log.
 final class CampoCache {
     private var key = ""
     private var json = ""
 
     func json(for tasks: [PastTask]) -> String {
+        let phone = CampoData.Phone.current()
+        let day = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
         let k = "\(Loc.lang.rawValue)|\(GameMood.current.rawValue)|\(tasks.count)|\(tasks.first?.id ?? "")|\(tasks.first?.real ?? 0)"
+            + "|\(day)|\(GolfStats.stamp())|\(phone.synced ?? "")|\(phone.note)|\(fileStamp(HookOffer.logURL.path))"
         if k != key {
             key = k
-            json = CampoData.make(tasks, golf: GolfStats.load().games, phone: .current()).json
+            json = CampoData.make(tasks, golf: GolfStats.load().games, phone: phone, offers: HookOffer.load(HookOffer.logURL)).json
         }
         return json
     }
@@ -651,7 +654,7 @@ enum CampoSnapshot {
               let entry = DashGridModel().visible.first(where: { $0.widget == .campo }) else { return }
         let rows = CGFloat(entry.size.height)
         let size = NSSize(width: width, height: rows * DashMetrics.row + (rows - 1) * DashMetrics.gap)
-        var data = CampoData.make(tasks, golf: GolfStats.load().games, phone: .current())
+        var data = CampoData.make(tasks, golf: GolfStats.load().games, phone: .current(), offers: HookOffer.load(HookOffer.logURL))
         data.still = true
         let web = CampoWebView.make(json: data.json)
         let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -20_000, y: -20_000), size: size),

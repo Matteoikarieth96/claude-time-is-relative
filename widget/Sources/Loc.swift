@@ -161,7 +161,26 @@ final class Loc: ObservableObject, @unchecked Sendable {
         let dir = Loc.file.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
-        try? data.write(to: Loc.file, options: .atomic)
+        Loc.writePrivate(data, to: Loc.file)
+    }
+
+    /// A file shared with the hooks, written as task_eta.py's write_json does: a new temporary file
+    /// next to it (0600, never through a link), then a rename over the name, so a link there is
+    /// replaced, never followed. Also the Mine's pickaxe (Miniera.swift). False if not written.
+    @discardableResult
+    static func writePrivate(_ data: Data, to url: URL) -> Bool {
+        let tmp = url.path + ".\(getpid()).tmp"
+        unlink(tmp)  // a crashed run's leftover, or a link planted there: removed, never followed
+        let fd = open(tmp, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { return false }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        let written = (try? handle.write(contentsOf: data)) != nil
+        try? handle.close()
+        guard written, rename(tmp, url.path) == 0 else {
+            unlink(tmp)
+            return false
+        }
+        return true
     }
 
     private static func modified() -> Date? {

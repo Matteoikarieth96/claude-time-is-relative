@@ -189,6 +189,7 @@ struct GolfRules: Equatable {
         let ux = velocity.dx / speed, uy = velocity.dy / speed
         let side: CGFloat = (hole.x - ball.x) * uy - (hole.y - ball.y) * ux > 0 ? -1 : 1
         let room = CGRect(origin: .zero, size: size).insetBy(dx: 20, dy: 20)
+        guard !room.isNull else { return hole }
         for (dx, dy) in [(-uy * side, ux * side), (uy * side, -ux * side), (ux, uy)] {
             let p = CGPoint(x: min(max(hole.x + dx * 40, room.minX), room.maxX), y: min(max(hole.y + dy * 40, room.minY), room.maxY))
             if hypot(p.x - hole.x, p.y - hole.y) > 20, obstacles.allSatisfy({ $0.contact(p, radius: holeRadius + 6) == nil }) { return p }

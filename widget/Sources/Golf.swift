@@ -326,7 +326,18 @@ final class GolfGame: ObservableObject {
         let now = CACurrentMediaTime()
         let dt = CGFloat(min(0.05, now - lastTick))
         lastTick = now
-        guard var b = ball, hole != nil, size.width > 0 else { return stop() }
+        guard var b = ball, hole != nil, size.width > 0 else {
+            // No course to roll on: the ball stops where it is and waits for a shot, as at rest.
+            stop()
+            if var b = ball, b.velocity != .zero {
+                b.velocity = .zero
+                ball = b
+                trace.sample(b.position, last: true)
+                totalCushions += b.cushions
+                waitForShot()
+            }
+            return
+        }
         let from = b.position
         let wasAway = b.leftHole
         let targets = self.targets

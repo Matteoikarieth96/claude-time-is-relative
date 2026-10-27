@@ -345,6 +345,8 @@ struct GemsCard: View {
     /// The detail of the chip under the pointer, and the one a click keeps open.
     @State private var hovered: GemsDetail?
     @State private var pinned: GemsDetail? = GemsDetail.debugOpen
+    /// Draws again when a new engine is ready (CampoNow works it out away from the main thread).
+    @ObservedObject private var campo = CampoNow.shared
     private var mood: GameMood { GameMood(rawValue: moodRaw) ?? .fallback }
 
     var body: some View {

@@ -223,16 +223,31 @@ struct GolfStats {
 
     static func load(_ defaults: UserDefaults = .standard) -> GolfStats {
         var stats = GolfStats()
-        if let data = defaults.data(forKey: gamesKey),
-           let games = try? JSONDecoder().decode([GolfRecord].self, from: data) {
+        if let data = defaults.data(forKey: gamesKey), let games = each(GolfRecord.self, data) {
             stats.games = games
         }
         stats.challengeDays = defaults.stringArray(forKey: daysKey) ?? []
-        if let data = defaults.data(forKey: roundsKey),
-           let rounds = try? JSONDecoder().decode([GolfRoundCard].self, from: data) {
+        if let data = defaults.data(forKey: roundsKey), let rounds = each(GolfRoundCard.self, data) {
             stats.rounds = rounds
         }
         return stats
+    }
+
+    /// One record that cannot be read is skipped, not the whole list: the next save would write
+    /// over all of them.
+    private struct Lenient<T: Decodable>: Decodable {
+        let value: T?
+        init(from decoder: Decoder) throws { value = try? T(from: decoder) }
+    }
+
+    private static func each<T: Decodable>(_ type: T.Type, _ data: Data) -> [T]? {
+        (try? JSONDecoder().decode([Lenient<T>].self, from: data)).map { $0.compactMap(\.value) }
+    }
+
+    /// Changes whenever a game is saved (the games are only ever added at the end): for what is
+    /// worked out from them, like the map's numbers.
+    static func stamp(_ defaults: UserDefaults = .standard) -> String {
+        defaults.data(forKey: gamesKey).map { "\($0.count):\($0.suffix(64).base64EncodedString())" } ?? ""
     }
 
     func save(_ defaults: UserDefaults = .standard) {

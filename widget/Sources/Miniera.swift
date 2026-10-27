@@ -229,27 +229,35 @@ enum MinePick {
     static var state: [String: Any] {
         let now = Date().timeIntervalSince1970
         if let cache, now - cache.checked < 5 { return cache.state }
-        let read = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let read = readFile()
         cache = (now, read)
         return read
     }
 
+    private static func readFile() -> [String: Any] {
+        (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    }
+
     static var current: Pickaxe { (state["piccone"] as? String).flatMap(Pickaxe.init(rawValue:)) ?? .legno }
 
-    /// The button's yes: the next pickaxe is taken, the hook's question goes away. Read again from
-    /// the file first: if a session took it meanwhile (`piccone su`), nothing is undone.
-    static func take(_ pick: Pickaxe) {
+    /// The button's yes: the next pickaxe is taken, the hook's question goes away. Under the lock the
+    /// hook takes too (mine_lock in task_eta.py), the file read again: if a session took it meanwhile
+    /// (`piccone su`), nothing is undone, and it is taken only while still earned.
+    static func take(_ pick: Pickaxe, stats: MineStats) {
         cache = nil
-        var s = state
+        let lock = open(file.path + ".lock", O_RDWR | O_CREAT | O_NOFOLLOW, 0o600)
+        guard lock >= 0 else { return }
+        defer { close(lock) }
+        guard flock(lock, LOCK_EX) == 0 else { return }
+        defer { flock(lock, LOCK_UN) }
+        var s = readFile()
         let before = (s["piccone"] as? String).flatMap(Pickaxe.init(rawValue:)) ?? .legno
-        guard before.next == pick else { return }
+        guard before.next == pick, pick.earned(stats) else { return }
         s["piccone"] = pick.rawValue
         s["pronto"] = NSNull()
         s["preso"] = Int(Date().timeIntervalSince1970)
         guard let data = try? JSONSerialization.data(withJSONObject: s, options: [.sortedKeys]) else { return }
-        try? data.write(to: file, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-        cache = nil
+        if Loc.writePrivate(data, to: file) { cache = (Date().timeIntervalSince1970, s) }
     }
 }
 
@@ -849,7 +857,7 @@ struct MinieraCard: View {
                                              "Claude te lo dice a fine risposta (rispondi «prendi il piccone»), oppure prendilo qui.")
                                          : L("take it here.", "prendilo qui.")), 14)
                             .foregroundStyle(MC.ink).fixedSize(horizontal: false, vertical: true)
-                        Button { MinePick.take(next); picked += 1 } label: {
+                        Button { MinePick.take(next, stats: stats); picked += 1 } label: {
                             MC.text(L("Take the \(next.name)", "Prendi il \(next.name.lowercased())"), 14).mcLabel()
                                 .padding(.horizontal, 10).padding(.vertical, 4)
                                 .background(MC.button).bevel(MC.grey(0.66), MC.grey(0.29), 2)
