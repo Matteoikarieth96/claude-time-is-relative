@@ -94,6 +94,11 @@ DATA_FILES = {
     "sleeps-import.json": lambda d: isinstance(d, dict) and set(d) == {"at"} and is_number(d["at"]),
     "sleeps.json": lambda d: isinstance(d, list) and all(
         isinstance(p, list) and len(p) == 2 and all(is_number(x) for x in p) for p in d),
+    # Gaming Mode: the mine's pickaxe, the language, the weekly analysis (input and result).
+    "miniera.json": lambda d: isinstance(d, dict) and bool(d) and set(d) <= {"piccone", "pronto", "blocchi", "fari", "settimane"},
+    "language.json": lambda d: isinstance(d, dict) and bool(d) and set(d) <= {"choice", "language"},
+    "insights-input.json": lambda d: isinstance(d, dict) and {"about", "this_week", "generated"} <= set(d),
+    "insights.json": lambda d: isinstance(d, dict) and d.get("v") == 1 and isinstance(d.get("items"), list),
 }
 # Logs task-eta appends to, checked by their first line ("<time> task-eta <where>" for errors).
 LOG_FILES = {
@@ -106,12 +111,15 @@ LOG_FILES = {
 # only in the default data folder, never in a folder chosen through TASK_ETA_DIR.
 LOCK_MARK = "task-eta index lock\n"
 LIVE_OFF_MARK = "task-eta: no live files for the widget while this file exists\n"
-MARKED_FILES = {"index.lock": LOCK_MARK, "live.off": LIVE_OFF_MARK, ".tasketa.lock": None}
+SCORE_OFF_MARK = "Claude's score line is off: `task_eta.py score on` turns it back on.\n"
+MARKED_FILES = {"index.lock": LOCK_MARK, "live.off": LIVE_OFF_MARK, ".tasketa.lock": None,
+                "score.off": SCORE_OFF_MARK, "miniera.json.lock": None}
 # Moved-aside copies and temporary files of the data files above: task-eta's own names, removed
 # by --purge in the default data folder only.
 ASIDE = re.compile(r"index\.json\.unreadable-\d{1,12}|(?:%s)\.\d{1,10}\.tmp" % "|".join(
     re.escape(n) for n in ("index.json", "index.json.bak", "predictor.json", "categories.json", "config.json", "sleeps.json", "sleeps-import.json",
-                           "install.json", "reparse.started", "debug-hook.json")))
+                           "install.json", "reparse.started", "debug-hook.json", "miniera.json", "language.json",
+                           "insights-input.json")))
 OLD_BACKUP = re.compile(r".+\.task-eta-backup-\d{8}-\d{6}(?:-\d+)?")  # where version 1 kept its backups
 SAFE_ID = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-"
 
@@ -757,6 +765,28 @@ def step_widget(ctx, wanted, login):
     return True
 
 
+PHONE_SCRIPT = os.path.join(HOME, "Library", "Mobile Documents", "iCloud~dk~simonbs~Scriptable", "Documents",
+                            "TaskETA.js")
+
+
+def remove_phone_script(ctx):
+    """The iPhone widget's script that TaskETA keeps in iCloud Drive > Scriptable: it holds the app's
+    code, so it goes with the app. Only a plain file that is TaskETA's own script."""
+    if not plain(PHONE_SCRIPT):
+        return
+    try:
+        with open(PHONE_SCRIPT, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return
+    if 'const MAC_IP = "' not in head or "TaskETA" not in head:
+        ctx.say("  %s is not TaskETA's script: left alone." % PHONE_SCRIPT)
+        return
+    ctx.change("delete the iPhone widget script %s (it holds the app's code)" % PHONE_SCRIPT)
+    if not ctx.dry:
+        os.remove(PHONE_SCRIPT)
+
+
 def remove_widget(ctx):
     if not os.path.lexists(APP_DEST):
         return
@@ -976,6 +1006,7 @@ def uninstall(ctx):
         state.pop("skill_previous", None)
     save_state(state, ctx)
     remove_widget(ctx)
+    remove_phone_script(ctx)
     if ctx.args.purge:
         if ctx.args.yes_purge or ctx.ask("Delete your local history in %s? This cannot be undone." % DATA_DIR,
                                          None, default=False):

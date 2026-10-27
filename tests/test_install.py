@@ -164,6 +164,31 @@ class Installer(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(data, "index.json")))
         self.assertTrue(os.path.exists(os.path.join(data, "my-notes.txt")))
 
+    def test_purge_and_uninstall_take_the_gaming_mode_files(self):
+        self.install(*NO_EXTRAS)
+        data = os.path.join(self.claude, "task-eta")
+        files = {"miniera.json": {"piccone": "legno", "pronto": None, "blocchi": 0, "fari": 0, "settimane": []},
+                 "language.json": {"choice": "it", "language": "it"},
+                 "insights-input.json": {"about": {}, "this_week": {}, "generated": "x"},
+                 "insights.json": {"v": 1, "items": []},
+                 "my-game.json": {"piccone": "legno"}}  # not ours by name: stays
+        for name, value in files.items():
+            with open(os.path.join(data, name), "w") as fh:
+                json.dump(value, fh)
+        open(os.path.join(data, "miniera.json.lock"), "w").close()
+        icloud = os.path.join(self.home, "Library", "Mobile Documents", "iCloud~dk~simonbs~Scriptable", "Documents")
+        os.makedirs(icloud)
+        with open(os.path.join(icloud, "TaskETA.js"), "w") as fh:
+            fh.write('// TaskETA on the iPhone\nconst MAC_IP = "http://192.0.2.10:8765"\n')
+        with open(os.path.join(icloud, "Other.js"), "w") as fh:
+            fh.write("// someone else's\n")
+        self.install("--uninstall", "--purge", "--yes-purge")
+        for name in ("miniera.json", "language.json", "insights-input.json", "insights.json", "miniera.json.lock"):
+            self.assertFalse(os.path.exists(os.path.join(data, name)), name)
+        self.assertTrue(os.path.exists(os.path.join(data, "my-game.json")))
+        self.assertFalse(os.path.exists(os.path.join(icloud, "TaskETA.js")))
+        self.assertTrue(os.path.exists(os.path.join(icloud, "Other.js")))
+
     def test_purge_never_touches_a_folder_set_by_the_environment(self):
         invoices = os.path.join(self.home, "Documents", "invoices")
         os.makedirs(invoices)
