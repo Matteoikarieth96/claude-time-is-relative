@@ -33,6 +33,9 @@ struct RunningDot: View {
     /// While the mini golf is locked the dot follows the pointer when dragged.
     @State private var drag: CGSize = .zero
     @State private var unlockedNow = false
+    /// The dot pulses while the clicks go on and stops once they stop (TaskStore.runGap), not for good.
+    @State private var pulsing = false
+    @State private var lastPulseClick = 0
 
     var body: some View {
         let badge = HStack(spacing: 3) {
@@ -56,7 +59,14 @@ struct RunningDot: View {
         let amp = 1.2 + Double(min(shown, 101)) / 22  // the jolt grows towards the 101st click of the run
         return Image(systemName: "circle.fill")
             .imageScale(.small)
-            .symbolEffect(.pulse, options: .repeating.speed(min(6, 1 + Double(shown) / 3)), isActive: dotClicks > 0)
+            .symbolEffect(.pulse, options: .repeating.speed(min(6, 1 + Double(shown) / 3)), isActive: pulsing)
+            .onChange(of: dotClicks) { _, clicks in
+                pulsing = true
+                lastPulseClick = clicks
+                DispatchQueue.main.asyncAfter(deadline: .now() + TaskStore.runGap) {
+                    if lastPulseClick == clicks { pulsing = false }
+                }
+            }
             .scaleEffect(pressedAt == nil ? 1 : 0.65)
             .animation(.spring(duration: 0.14), value: pressedAt == nil)
             .keyframeAnimator(initialValue: Jolt(), trigger: dotClicks) { content, v in

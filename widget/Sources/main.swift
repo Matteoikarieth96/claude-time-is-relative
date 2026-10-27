@@ -195,7 +195,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 enum Snapshot {
     static func render(to url: URL, dark: Bool, demo: Bool, celebrate: Bool = false) -> Bool {
-        let store = celebrate ? TaskStore.celebrationDemo() : demo ? TaskStore.demo() : TaskStore()
+        // Never saving its prefs: "--compact" or "--golf" on the real list must not stick.
+        let store = celebrate ? TaskStore.celebrationDemo() : demo ? TaskStore.demo() : TaskStore(saves: false)
         let dinoFrame = args.firstIndex(of: "--dino").flatMap { $0 + 1 < args.count ? Double(args[$0 + 1]) : nil }
         if args.contains("--compact") {
             store.compact = true

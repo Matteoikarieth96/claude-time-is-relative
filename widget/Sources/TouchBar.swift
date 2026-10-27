@@ -319,7 +319,7 @@ final class TouchBarController: NSObject, NSTouchBarDelegate {
         }
         if let demo, now - demo.start < 60 {
             let states = demoStates()
-            button?.model = states[safeInt((now - demo.start) / 3) % states.count].model
+            button?.model = states[max(0, safeInt((now - demo.start) / 3)) % states.count].model
         } else {
             demo = nil
             button?.model = stripModel(now: now)

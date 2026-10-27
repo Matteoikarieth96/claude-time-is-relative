@@ -32,7 +32,7 @@ struct PastTask: Identifiable {
 
     var outcome: Outcome? { estimate.map { outcomeOf(real: real, estimate: $0, range: range) } }
 
-    /// The tasks of an index.json (written by task_eta.py), headless runs left out.
+    /// The finished tasks of an index.json (written by task_eta.py), test runs left out.
     static func load(from url: URL) -> [PastTask] {
         guard isRegularFile(url.path), let data = try? Data(contentsOf: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -44,14 +44,23 @@ struct PastTask: Identifiable {
                                       home.replacingOccurrences(of: "/", with: "-")]
         var out: [PastTask] = []
         out.reserveCapacity(tasks.count)
+        let now = Date().timeIntervalSince1970
+        // The same tasks as finished_tasks and is_bench in task_eta.py: over, under 12 h, no
+        // background agent still out (for 12 h), no test runs or benchmark folders.
+        let benchPaths = ["/-private-tmp-", "/-tmp-", "bench-runs"]
         for (key, value) in tasks {
-            guard let t = value as? [String: Any], (t["headless"] as? Bool) != true,
-                  let real = sane((t["dur_s"] as? NSNumber)?.doubleValue), real > 0,
+            guard let t = value as? [String: Any], (t["headless"] as? NSNumber)?.boolValue != true,
+                  (t["open"] as? NSNumber)?.boolValue != true,
+                  let real = sane((t["dur_s"] as? NSNumber)?.doubleValue), real > 0, real < 12 * 3600,
                   let start = sane((t["start_ts"] as? NSNumber)?.doubleValue), start > 0 else { continue }
+            if ((t["pending_bg"] as? NSNumber)?.doubleValue ?? 0) != 0,
+               now - (sane((t["end_ts"] as? NSNumber)?.doubleValue) ?? 0) < 12 * 3600 { continue }
+            let file = (t["file"] as? String) ?? ""
+            if benchPaths.contains(where: { file.contains($0) }) { continue }
             let est = sane((t["estimate_min"] as? NSNumber)?.doubleValue).flatMap { $0 > 0 ? $0 * 60 : nil }
             var range: (low: Double, high: Double)?
             if let r = t["est_range"] as? [NSNumber], r.count == 2,
-               let lo = sane(r[0].doubleValue), let hi = sane(r[1].doubleValue), hi > lo, lo >= 0 {
+               let lo = sane(r[0].doubleValue), let hi = sane(r[1].doubleValue), hi > lo, lo > 0 {
                 range = (lo, hi)
             }
             let cwd = (t["cwd"] as? String) ?? ""
@@ -286,16 +295,23 @@ final class DashboardModel: ObservableObject {
         self.chatLink = chatLink
     }
 
+    /// Bumped by every reload and by drop(): a read that ends after a newer one, or after the
+    /// window closed, is thrown away.
+    private var loadGeneration = 0
+
     /// The index is read away from the main thread: 1-2 MB of JSON.
     func reload() {
         loading = true
+        loadGeneration += 1
+        let generation = loadGeneration
         let url = indexURL
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let tasks = PastTask.load(from: url)
             DispatchQueue.main.async {
-                self?.all = tasks
-                self?.loading = false
-                self?.recompute()
+                guard let self, self.loadGeneration == generation else { return }
+                self.all = tasks
+                self.loading = false
+                self.recompute()
             }
         }
     }
@@ -308,6 +324,8 @@ final class DashboardModel: ObservableObject {
 
     /// Frees the history when the window closes.
     func drop() {
+        loadGeneration += 1
+        loading = false
         all = []
         stats = DashStats()
         previous = nil
@@ -799,7 +817,7 @@ struct DaysWidget: View {
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                 }
             }
-            .chartXScale(domain: start...end)
+            .chartXScale(domain: min(start, end)...max(start, end))
             .chartYScale(domain: 0...top)
             .chartXAxis {
                 AxisMarks(values: labelDays(start: start, span: span, every: max(1, span / (size.width >= 3 ? 10 : 5)))) { _ in

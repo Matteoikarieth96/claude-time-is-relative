@@ -18,13 +18,17 @@ func openChat(_ url: URL?) {
 /// runs count: what was already done or waiting at start-up is not announced again. They go to
 /// macOS when it allows them; an app signed ad hoc, as this one is when built on the Mac, is
 /// refused ("Notifications are not allowed for this application"), so the app then shows its own
-/// in the top right corner. A click on either opens the session's chat.
+/// in the top right corner. If you said no to TaskETA's notifications, nothing is shown. A click on
+/// either opens the session's chat.
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private let store: TaskStore
     private let prefs: Prefs
     private let center = UNUserNotificationCenter.current()
     private let toasts = ToastController()
-    private var native = false
+    /// Where announcements go: to macOS once allowed, to the app's own when macOS refuses the app
+    /// (an error, as for an app signed ad hoc), nowhere when you said no or before macOS answers.
+    private enum Route { case none, native, own }
+    private var route = Route.none
     private let startedAt = Date().timeIntervalSince1970
     private var seen: [String: TaskState] = [:]
     /// Finished tasks, announced a few seconds later: a turn that ends with a question shows up
@@ -98,10 +102,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             if let over = item.overrunText(at: now) { parts.append(over) }
             body = parts.joined(separator: ", ")
         }
-        guard native else {
+        switch route {
+        case .none: return
+        case .own:
             toasts.show(Toast(waiting: waiting, title: title, subtitle: subtitle, body: body,
                               late: !waiting && item.overrun(at: now) != nil, url: item.chatURL))
             return
+        case .native: break
         }
         let content = UNMutableNotificationContent()
         content.title = title
@@ -123,8 +130,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     private func authorize() {
-        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
-            DispatchQueue.main.async { self?.native = granted }
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
+            // A plain "no" from you has no error: then the app's own stay away too.
+            let route: Route = granted ? .native : error != nil ? .own : .none
+            DispatchQueue.main.async { self?.route = route }
         }
     }
 
@@ -241,7 +250,7 @@ final class ToastController {
         let size = host.fittingSize
         host.frame = NSRect(origin: .zero, size: size)
         host.autoresizingMask = [.width, .height]
-        var glassed = false
+        let glassed: Bool
         #if compiler(>=6.2) // NSGlassEffectView is in the macOS 26 SDK only
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView(frame: host.frame)
@@ -249,7 +258,11 @@ final class ToastController {
             glass.contentView = host
             panel.contentView = glass
             glassed = true
+        } else {
+            glassed = false
         }
+        #else
+        glassed = false
         #endif
         if !glassed {
             let effect = NSVisualEffectView(frame: host.frame)

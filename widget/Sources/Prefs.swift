@@ -65,7 +65,7 @@ final class Prefs: ObservableObject {
     @Published var dwellClick: Bool {
         didSet { UserDefaults.standard.set(dwellClick, forKey: "dwellClick") }
     }
-    /// The TaskETA button in the Touch Bar's Control Strip (TouchBar.swift).
+    /// The TaskETA button in the Touch Bar's Control Strip (TouchBar.swift), off until you turn it on.
     @Published var touchBarOn: Bool {
         didSet {
             UserDefaults.standard.set(touchBarOn, forKey: "touchBarOn")
@@ -104,7 +104,7 @@ final class Prefs: ObservableObject {
         notifyDone = defaults.object(forKey: "notifyDone") as? Bool ?? true
         notifyWaiting = defaults.object(forKey: "notifyWaiting") as? Bool ?? true
         notifyMode = defaults.string(forKey: "notifyMode").flatMap(NotifyMode.init(rawValue:)) ?? .watching
-        touchBarOn = defaults.object(forKey: "touchBarOn") as? Bool ?? true
+        touchBarOn = defaults.object(forKey: "touchBarOn") as? Bool ?? false
         dwellClick = defaults.object(forKey: "dwellClick") as? Bool ?? true
         phoneOn = defaults.object(forKey: "phoneOn") as? Bool ?? false
         phoneToken = defaults.string(forKey: "phoneToken") ?? Prefs.newToken()

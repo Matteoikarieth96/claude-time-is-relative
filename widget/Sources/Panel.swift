@@ -149,7 +149,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         grip.onHide = onHide
         content.addSubview(grip)
 
-        var glassed = false
+        let glassed: Bool
         // NSGlassEffectView exists only in the macOS 26 SDK (Xcode 26, Swift 6.2): older SDKs,
         // like CI's macos-14 runner, build the blur below instead.
         #if compiler(>=6.2)
@@ -164,7 +164,11 @@ final class PanelController: NSObject, NSWindowDelegate {
             glass.contentView = content
             panel.contentView = glass
             glassed = true
+        } else {
+            glassed = false
         }
+        #else
+        glassed = false
         #endif
         if !glassed {
             let effect = NSVisualEffectView()
@@ -186,7 +190,11 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
         NotificationCenter.default.addObserver(self, selector: #selector(occlusionChanged),
                                                name: NSWindow.didChangeOcclusionStateNotification, object: panel)
+        // The words of the other language take another height.
+        NotificationCenter.default.addObserver(self, selector: #selector(languageChanged), name: Loc.changed, object: nil)
         fit()
+        // A panel that starts hidden shows the still copy from the start, not the live list.
+        updatePause()
     }
 
     func show() {
@@ -203,6 +211,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     @objc private func occlusionChanged() { updatePause() }
+    @objc private func languageChanged() { DispatchQueue.main.async { [weak self] in self?.fit() } }
 
     private func updatePause() {
         let pause = !isOnScreen

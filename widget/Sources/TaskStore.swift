@@ -118,6 +118,7 @@ struct TaskItem: Identifiable {
     var declaredKind: String? = nil  // the kind of work in Claude's ⏱ line
     var title: String? = nil       // the session's title in the Claude app sidebar
     var appSession: String? = nil  // the session's id in the Claude app ("local_…"), for the chat link
+    var lastActive: Double? = nil  // when the transcript last changed: a stopped task's clock stays there
 
     var state: TaskState {
         if input != nil { return .waiting }
@@ -141,7 +142,8 @@ struct TaskItem: Identifiable {
             if data.status == "background" { return upTo(now) }
             return upTo(min(input?.ts ?? now, now))
         case .stale:
-            return upTo(now - (quiet ?? 0))
+            // Fixed when read, not from `now`: `now` ticks slower than `quiet` grows, and the clock went back.
+            return upTo(lastActive ?? (now - (quiet ?? 0)))
         case .running, .background:
             return upTo(now)
         }
@@ -260,14 +262,14 @@ final class TaskStore: ObservableObject {
     @Published private(set) var dismissed: Set<String> { didSet { generation += 1 } }
     /// The desktop panel shows only the counts, no times: a click on its header switches.
     @Published var compact: Bool {
-        didSet { if !demo { UserDefaults.standard.set(compact, forKey: "panelCompact") } }
+        didSet { if saves { UserDefaults.standard.set(compact, forKey: "panelCompact") } }
     }
     /// The short panel blinks when a task finishes or starts waiting for you.
     @Published private(set) var flash: Flash?
     /// The easter egg of the dot next to "in corso": every click ever, kept across restarts (101 in
     /// all open the mini golf, more than one sitting is fine).
     @Published private(set) var dotClicks: Int {
-        didSet { if !demo { UserDefaults.standard.set(dotClicks, forKey: "dotClicks") } }
+        didSet { if saves { UserDefaults.standard.set(dotClicks, forKey: "dotClicks") } }
     }
     /// The clicks of this run, never stopping more than `runGap`: the surprises at 8, 69 and 101
     /// count these, so they come back every run. Not saved.
@@ -276,13 +278,13 @@ final class TaskStore: ObservableObject {
     @Published private(set) var dotSession = 0
     /// The longest run ever.
     @Published private(set) var dotBestRun: Int {
-        didSet { if !demo { UserDefaults.standard.set(dotBestRun, forKey: "dotBestRun") } }
+        didSet { if saves { UserDefaults.standard.set(dotBestRun, forKey: "dotBestRun") } }
     }
     private var lastDotTap = 0.0
     static let runGap = 1.5
     /// Mini golf on the dot, unlocked for good at its 101st click (see Golf.swift).
     @Published var golfUnlocked: Bool {
-        didSet { if !demo { UserDefaults.standard.set(golfUnlocked, forKey: "golfUnlocked") } }
+        didSet { if saves { UserDefaults.standard.set(golfUnlocked, forKey: "golfUnlocked") } }
     }
     @Published var dotBurst: DotBurst?
     /// Rows celebrating a task that has just finished (task key -> celebration).
@@ -299,6 +301,8 @@ final class TaskStore: ObservableObject {
     private var timer: Timer?
     private var ticks = 0
     private let demo: Bool
+    /// Writes its prefs (the panel's size, the dot's clicks, the mini golf): not a demo, not a snapshot.
+    private let saves: Bool
     private var declaredFound: [String: DeclaredLine] = [:]  // task key -> Claude's ⏱ line
     private var scannedUpTo: [String: UInt64] = [:]    // task key -> transcript bytes already read
     private var titles: [String: AppSession] = [:]     // CLI session id -> the session in the app sidebar
@@ -332,9 +336,10 @@ final class TaskStore: ObservableObject {
     /// The clicks on the "in corso" dot that open the mini golf.
     static let golfClicks = 101
 
-    init(dir: URL = TaskStore.defaultDir) {
+    init(dir: URL = TaskStore.defaultDir, saves: Bool = true) {
         self.dir = dir
         self.demo = false
+        self.saves = saves
         self.showAutomated = UserDefaults.standard.bool(forKey: "showAutomated")
         self.hidePrompts = UserDefaults.standard.bool(forKey: "hidePrompts")
         self.compact = UserDefaults.standard.bool(forKey: "panelCompact")
@@ -351,6 +356,7 @@ final class TaskStore: ObservableObject {
     init(demoItems: [TaskItem], now: Double) {
         self.dir = TaskStore.defaultDir
         self.demo = true
+        self.saves = false
         self.showAutomated = false
         self.hidePrompts = false
         self.compact = false
@@ -421,6 +427,7 @@ final class TaskStore: ObservableObject {
                 }
             }
             var item = TaskItem(id: name, data: task, quiet: quiet)
+            item.lastActive = quiet.map { now - $0 }
             if let session = task.session, let app = titles[session] {
                 item.title = app.title
                 item.appSession = app.id
@@ -610,7 +617,7 @@ final class TaskStore: ObservableObject {
     func unlockGolf(by way: String) {
         guard !golfUnlocked else { return }
         golfUnlocked = true
-        if !demo { UserDefaults.standard.set(way, forKey: "golfUnlockedBy") }
+        if saves { UserDefaults.standard.set(way, forKey: "golfUnlockedBy") }
         HoleCheer.cheer(level: 1)
         let burst = DotBurst(count: 101, start: Date().timeIntervalSince1970)
         dotBurst = burst
@@ -682,7 +689,7 @@ final class TaskStore: ObservableObject {
             dismissed.insert(item.key)
         }
         expanded.remove(group.id)
-        if !demo { UserDefaults.standard.set(Array(dismissed), forKey: "dismissed") }
+        if saves { UserDefaults.standard.set(Array(dismissed), forKey: "dismissed") }
     }
 
     var runningCount: Int { visible.filter { $0.state == .running || $0.state == .background }.count }
