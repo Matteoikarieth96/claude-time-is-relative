@@ -102,6 +102,7 @@ class ElapsedTail(unittest.TestCase):
 
 
 class SelfCalibratingRange(unittest.TestCase):
+    @unittest.mock.patch.object(task_eta, "RANGE_TARGET", 0.5)  # the rule itself, at the round-7 target
     def test_the_narrowest_range_that_held_half_the_time(self):
         qs = task_eta.RANGE_QS
         self.assertEqual(qs[0], 0.25)
@@ -136,6 +137,12 @@ class BriefSubagents(unittest.TestCase):
         work = ([agent_task(T0 + i, 600 + i, [120, 180]) for i in range(5)]
                 + [agent_task(T0 + 10 + i, 3000 + i, [1200, 1500]) for i in range(5)])
         pred = task_eta.Predictor(work, self.lat())
+        self.check_two_lines(pred)
+        with unittest.mock.patch.object(task_eta, "BRIEF_LINE", False):  # one line only
+            self.assertIsNone(task_eta.brief_estimate(pred, None, "opus-5-5", "xhigh"))
+            self.assertAlmostEqual(task_eta.kind_estimates(pred, None, "opus-5-5", "xhigh")["agents"][0], 3002.0)
+
+    def check_two_lines(self, pred):
         short = task_eta.brief_estimate(pred, None, "opus-5-5", "xhigh")
         self.assertAlmostEqual(short[0], 602.0)
         ests = task_eta.kind_estimates(pred, None, "opus-5-5", "xhigh")
@@ -151,9 +158,13 @@ class BriefSubagents(unittest.TestCase):
                 + [agent_task(T0 + 10 + i, 3000 + i, [1200]) for i in range(6)])
         pred = task_eta.Predictor(work, self.lat())
         self.assertIsNone(task_eta.brief_estimate(pred, None, "opus-5-5", "xhigh"))
-        all_agents = sorted(t["dur_s"] for t in work)
+        # One line: the tasks whose subagents ran long, once there are 5 of them...
+        self.assertAlmostEqual(task_eta.kind_estimates(pred, None, "opus-5-5", "xhigh")["agents"][0], 3002.5)
+        # ...and all the tasks with subagents before that.
+        few = work[:3] + work[3:7]
+        pred = task_eta.Predictor(few, self.lat())
         self.assertAlmostEqual(task_eta.kind_estimates(pred, None, "opus-5-5", "xhigh")["agents"][0],
-                               task_eta.pct(all_agents, 0.5))
+                               task_eta.pct(sorted(t["dur_s"] for t in few), 0.5))
 
 
 class BigWrites(unittest.TestCase):

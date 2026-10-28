@@ -11,8 +11,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DOCS = os.path.dirname(HERE)
-SHEETS = {"how": ("how-it-works.png", 980), "line": ("the-line.png", 1024),
-          "privacy": ("privacy.png", 839), "problem": ("problem.png", 942)}
+SHEETS = {"how": ("how-it-works.png", 980), "line": ("the-line.png", 1013),
+          "privacy": ("privacy.png", 839), "problem": ("problem.png", 971), "live": ("live-gap.png", 1222)}
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 
 

@@ -6,7 +6,7 @@ Time estimates for Claude Code, learned from your own past sessions, on your own
 
 ## The problem
 
-You ask Claude Code for something. How long will it take? Claude does not know. A model has no clock and no memory of its past work, so it guesses. In 96 test tasks on the author's Mac, Claude's own guesses were about 3 times too long, and only 16% landed within 2x of the real time.
+You ask Claude Code for something. How long will it take? Claude does not know. A model has no clock and no memory of its past work, so it guesses. In 96 test tasks on the author's Mac, Claude's own guesses were about 3 times too long.
 
 ## The solution
 
@@ -36,10 +36,10 @@ python3 claude-time-is-relative/install.py
 
 The installer first says what it reads and writes, then asks before it changes anything:
 
-1. **Install?** Two hooks in `~/.claude/settings.json` and the skill link. No: nothing changes.
+1. **Install?** Two hooks (`UserPromptSubmit`, `Stop`) in `~/.claude/settings.json` and the skill link. No: nothing changes.
 2. **Read your past sessions now?** Yes: the estimates use your own times from the first prompt. No: it starts from today, and older sessions stay unread as long as `~/.claude/task-eta/config.json`, which records the date, is there.
 3. **Add a short rule to `~/.claude/CLAUDE.md`?** It makes Claude follow the format more reliably. The hook works without it.
-4. **Install the TaskETA menu bar widget?** (macOS only) It is built on your Mac from the source in `widget/`, then copied to `~/Applications`. If yes: **open it at login?** Off unless you say so.
+4. **Install the TaskETA menu bar widget?** (macOS only) It is built on your Mac from the source in `widget/`, then copied to `~/Applications`, and four more hooks go into `~/.claude/settings.json` (`PreToolUse`, `PermissionRequest`, `Notification`, `PostToolUse`) to tell it when a session waits for you. If yes: **open it at login?** Off unless you say so.
 
 A question left unanswered counts as no. It backs up every file before changing it (in `~/.claude/task-eta/backups`, private to your user, the last 10 of each file), follows a `settings.json` or `CLAUDE.md` that is a link to your dotfiles instead of replacing it, stops with nothing changed if a file is not what it expects (not valid JSON, read-only, odd markers), never touches a hook that is not its own, and leaves alone a `~/.claude/skills/task-eta` that belongs to another skill. `--uninstall` puts `settings.json` and `CLAUDE.md` back byte for byte when nothing else changed them since the install; otherwise it removes only what task-eta added. Use `--dry-run` to see the changes first, or `--check` to see what is installed.
 
@@ -52,9 +52,9 @@ You can also ask Claude: *"set up task-eta from this folder"*. The skill explain
 | | |
 |---|---|
 | **Reads** | The transcripts Claude Code already keeps in `~/.claude/projects`, only after you say yes. On a Mac with the Claude desktop app, the model, effort and title of each session from the app's own files. |
-| **Writes** | `~/.claude/task-eta/`: your task times, the first 300 characters of each prompt with secrets in common formats replaced by `[secret]` (API keys and tokens by their prefix, private keys, long random strings, values after a name such as `password:` or `DB_PASSWORD=`), model and effort. Private to your user (folders 0700, files 0600). The masking works by patterns, so rotate any key you paste into a prompt anyway. The hooks in `~/.claude/settings.json`, the optional rule in `~/.claude/CLAUDE.md`, the optional app in `~/Applications`. |
+| **Writes** | `~/.claude/task-eta/`: your task times, the first 300 characters of each prompt with secrets in common formats replaced by `[secret]` (API keys and tokens by their prefix, private keys, long random strings, including keys in URL paths, values after a name such as `password:`, `DB_PASSWORD=` or `clientSecret`), model and effort. Private to your user (folders 0700, files 0600). The masking works by patterns, so rotate any key you paste into a prompt anyway. The hooks in `~/.claude/settings.json`, the optional rule in `~/.claude/CLAUDE.md`, the optional app in `~/Applications`. |
 | **Never** | No network code (Python standard library only, a Swift app with no networking), no telemetry, no account. The author receives nothing. |
-| **Good to know** | To help Claude pick the kind of work, the hook adds up to 5 snippets (70 characters each) of your own similar past prompts from the same project to each new prompt, with secrets masked and marked as untrusted data. They reach the model like the rest of your conversation. |
+| **Good to know** | To help Claude pick the kind of work, the hook lists up to 5 of your similar past requests from the same project by kind, time and tool calls only: no text of a past prompt goes into a new one. Snippets of your prompts show only where you look for them: `report`, `status` and the widget. |
 
 Remove everything with `python3 install.py --uninstall`; add `--purge` to delete your history too.
 
@@ -62,7 +62,7 @@ Remove everything with `python3 install.py --uninstall`; add `--purge` to delete
 
 ![The estimate line, the actual time line and the widget bar](docs/the-line.png)
 
-- **Before**: `⏱ Estimated time with <model> <effort>: ~N min (likely X to Y min, <kind>)`. The kind is how much work Claude plans: **quick** (1 to 3 tool calls), **medium** (4 to 15), **long** (16 or more), **with brief subagents** (Agent, Task or Workflow calls whose subagents all finish in under about 10 minutes) or **with subagents** (at least one researches or builds for longer). A file or document of more than about 150 lines that Claude writes counts as 3 calls, since writing it is long model time. The hook gives Claude one line per kind and Claude copies the one that matches its plan. On the author's history each kind takes 3 to 5 times as long as the one before (medians 39 s, 2 min, 8 min and 38 min), so the kind decides most of the estimate. Each kind's range is measured out of sample: the narrowest of four widths that held the real time at least one time in two (the widest if none did, the quartiles while a kind has fewer than 20 tested tasks).
+- **Before**: `⏱ Estimated time with <model> <effort>: ~N min (likely X to Y min, <kind>)`. The kind is how much work Claude plans: **quick** (1 to 3 tool calls), **medium** (4 to 15), **long** (16 or more), **with brief subagents** (Agent, Task or Workflow calls whose subagents all finish in under about 10 minutes) or **with subagents** (at least one researches or builds for longer). A file or document of more than about 150 lines that Claude writes counts as 3 calls, since writing it is long model time. The hook gives Claude one line per kind and Claude copies the one that matches its plan. On the author's history each kind takes 3 to 5 times as long as the one before (medians 39 s, 2 min, 8 min and 38 min), so the kind decides most of the estimate. Each kind's range is measured out of sample: the narrowest of four widths that held the real time at least 7 times in 10 on the tasks tested so far (the widest if none did, the quartiles while a kind has fewer than 20 tested tasks), and each task is scored with the width picked before it. Next to each line the block shows how often that kind's range held, and a separate line gives the record of the lines Claude actually printed: the last 100, by the kind Claude declared, with the shares that finished earlier and later.
 - **After**: `⏱ Actual time: ~N min (likely X to Y min: inside)`. The `~` is there because the line is printed just before Claude's final reply: what usually followed this call in past sessions of the same kind (desktop app or terminal) is added, re-timed for the model in use.
 - **During a long task**: Claude may add `⏱ Elapsed: 12 min · about 8 min left (likely 5 to 15 min)`, re-estimated from the work done so far.
 - Times are in seconds under 90 s, otherwise in minutes (never hours).
@@ -83,27 +83,47 @@ Want the widget as a game? The [`gaming-mode`](https://github.com/Matteoikarieth
 
 ## How accurate is it
 
-![Claude's time estimates are closing the gap: live estimates by version](docs/live-gap.png)
+**In short: on the author's own tasks, v4's likely range holds the real time between 65% and 72% of the time.** 65% is the live record: 65 of the 100 lines v4 printed in real sessions (25 to 28 October 2026). 72% is a replay of all 919 of the author's real tasks with tool calls (30 July to 28 October 2026) through v4's code, each task estimated only from the tasks that had ended before it, with the right kind of work; it is a ceiling, since v4's settings were tuned on that same history. On 917 automated test runs the same replay holds 78%. A task counts as inside when its real time, as the Actual line prints it (to the second under 90 s, to the minute above), falls in the range as printed.
 
-**Live, in the author's own sessions.** Every estimate the hook printed from 20 to 22 October 2026, test runs left out (119 tasks). The real time fell inside the printed range 16 of 39 times with v1 (by category, 20 to 21 October), 9 of 15 with v2 (by kind of work, 21 October) and 18 of 25 with v3 (this version, with the round 7 changes, since the evening of 21 October). A typical estimate is now off by 1.5 times either way, against 2.2 with v1, and the median task takes 1.00 times its estimate, where v1's ran 1.8 times long. The samples are small and grow with every session.
+![How often the range held: every live line by version, as printed](docs/live-gap.png)
+
+**Live, in the author's own sessions.** Every line the hook printed with a range, test runs left out, checked against the range as printed with the real time as the Actual line prints it: to the second under 90 s, to the minute above (re-read on 28 October 2026):
+
+| Version | Range held | Finished earlier | Ran over |
+|---|---|---|---|
+| v1, by category (20 to 21 October) | 18 of 40 (45%) | 38% | 18% |
+| v2, by kind of work (21 October) | 9 of 15 (60%) | 20% | 20% |
+| v3, after round 7, ranges meant to hold 1 time in 2 (21 to 25 October) | 119 of 173 (69%) | 16% | 15% |
+| v4, this version, ranges meant to hold 7 times in 10 (25 October evening to 28 October) | 65 of 100 (65%) | 6% | 29% |
+
+v4's wider ranges have not lifted the live record above v3's yet: almost a third of its tasks ran over. By the kind Claude declared, v4's range held 16 of 18 long lines, 30 of 43 medium, 8 of 16 with subagents and 11 of 23 quick (11 of those quick tasks ran over). The samples are small and grow with every session, and the block now shows Claude this record before each task.
 
 ![Claude guessing vs task-eta](docs/problem.png)
 
-**Replayed on the author's history.** 715 real day-to-day tasks with tool calls, 30 July to 20 October 2026, automated test runs left out. Each task was estimated only from the tasks (and model speeds) that had ended before it began, as the hook would have done at the time: 715 real day-to-day tasks with tool calls, 30 July to 20 October 2026, automated test runs left out. Each task was estimated only from the tasks (and model speeds) that had ended before it began, as the hook would have done at the time:
+**Every version replayed on every task (28 October 2026).** Each version's own code from this repository's history, run on all of the author's tasks with tool calls from 30 July to 28 October 2026: each task estimated only from the tasks that had ended before it, with the right kind of work and the same inside rule as above.
 
-| | Within 2x of the real time | Median error | Real time inside the likely range |
-|---|---|---|---|
-| Claude guessing, earlier benchmark on test tasks (96) | 16% | about 3x too long | n/a |
-| Previous version, by category and similar requests (645) | 40% | 75% | 47% |
-| Version of 20 October, by kind of work, when the kind is right, last 258 tasks re-measured on 21 October | 63% | | 49% |
-| This version (21 October), same tasks, when the kind is right | 66% | | 55% |
-| quick / medium / long / with subagents, this version | 65% / 69% / 63% / 62% | | 52% / 56% / 59% / 52% |
-| Round 7 benchmark, 100 new test tasks on 5 models and efforts, the line as Claude wrote it: before the changes (10) | 20% | 68% | 10% |
-| the same benchmark after the changes (89) | 58% | 52% | 54% |
-| Round 8 benchmark (22 October), 182 new test tasks on Opus, Sonnet, Haiku and Fable, same code as round 7, the line as Claude wrote it | | | 49% (32% finished early, 19% over) |
-| mid-task `eta`, after 20 model calls (47) | 91% | 21% | |
+| Version | Real tasks (919) | Finished earlier | Ran over | Automated test runs (917) |
+|---|---|---|---|---|
+| v1, by category | 46% | 26% | 28% | 49% |
+| v2, by kind of work | 56% | 21% | 23% | 62% |
+| v3, ranges meant to hold 1 time in 2 | 62% | 18% | 21% | 68% |
+| v4, ranges meant to hold 7 times in 10 | 72% | 14% | 14% | 78% |
 
-Two limits, said plainly. The figures for real tasks assume Claude picks the right kind: it only has to know how much work it plans, which is easier than guessing minutes, and it did on 35 of the author's last 49 tasks, 83 of 89 round 7 tasks and 162 of 182 round 8 tasks, but it can be wrong. The hook shows that score in each block and `report` shows it too. And even with the right kind, the time of one task is noisy: about 6 or 7 times in 10 within 2x. The benchmark tasks were written to be checked headless, so they differ from day-to-day work: heavy code written from scratch ran 2 to 3 times over the line, and tasks whose subagents each worked a few seconds ran far under it (round 8: 4 of 24 subagent tasks inside the range, 19 finished early). Treat the first estimate as a calibrated guess, not a promise; it narrows once the task is under way. Run `python3 task_eta.py report` to see your own numbers.
+v4 wins mostly with wider ranges: its high end is a median 4.7 times its low end, against 3.0 for v3. The point estimate itself ("~N min") matched the real time as printed on about 1 task in 10 with every version.
+
+**Replayed on the author's history (v3 and before).** 715 real day-to-day tasks with tool calls, 30 July to 20 October 2026, automated test runs left out. Each task was estimated only from the tasks (and model speeds) that had ended before it began, as the hook would have done at the time. These ranges were meant to hold 1 time in 2; v4's ranges aim for 7 in 10, and the block and `report` show how often they held on your own tasks.
+
+| | Real time inside the likely range |
+|---|---|
+| Previous version, by category and similar requests (645) | 47% |
+| Version of 20 October, by kind of work, when the kind is right, last 258 tasks re-measured on 21 October | 49% |
+| v3 (21 October), same tasks, when the kind is right | 55% |
+| quick / medium / long / with subagents, v3 | 52% / 56% / 59% / 52% |
+| Round 7 benchmark, 100 new test tasks on 5 models and efforts, the line as Claude wrote it: before the changes (10) | 10% |
+| the same benchmark after the changes (89) | 54% |
+| Round 8 benchmark (22 October), 182 new test tasks on Opus, Sonnet, Haiku and Fable, same code as round 7, the line as Claude wrote it | 49% (32% finished early, 19% over) |
+
+Two limits, said plainly. The replayed figures assume Claude picks the right kind: it only has to know how much work it plans, which is easier than guessing minutes, and it did on about 3 of the author's last 4 tasks, 83 of 89 round 7 tasks and 162 of 182 round 8 tasks, but it can be wrong, and with a wrong kind the range usually misses. The hook shows that score in each block and `report` shows it too. And even with the right kind, the time of one task is noisy: in v4's live record the range still missed about 1 time in 3. The benchmark tasks were written to be checked headless, so they differ from day-to-day work: heavy code written from scratch ran 2 to 3 times over the line, and tasks whose subagents each worked a few seconds ran far under it (round 8: 4 of 24 subagent tasks inside the range, 19 finished early). Treat the first estimate as a calibrated guess, not a promise; it narrows once the task is under way. Run `python3 task_eta.py report` to see your own numbers.
 
 ## Commands
 
@@ -121,7 +141,7 @@ python3 install.py --uninstall      # remove it all (add --purge to delete the h
 
 - A task is one prompt you typed plus all the work it caused, until the last action before your next prompt.
 - Background agents and workflows belong to the task that launched them, even when they report back after you have moved on: that task runs until their report is handled, and the task you are on is not charged for it. A task whose agent has not reported back yet stays out of the statistics until it does (or for 12 hours).
-- Not counted: time waiting for your answers, silences over 15 minutes inside a turn with no subagent running, pauses over an hour, time the Mac was asleep between Claude's steps (the hooks note each wake and then read macOS's power log in the background, at most once an hour; `python3 task_eta.py import-sleeps` does it at once and re-reads the history; sleep inside a single model call, a subagent's own run or a background job still counts), and the tool calls of the estimate itself (`elapsed`, `eta`) when the kind is counted.
+- Not counted: time waiting for your answers, silences over 15 minutes inside a turn with no subagent running, pauses over an hour, time the Mac was asleep between Claude's steps (the hooks note each wake and then read macOS's power log in the background, at most once an hour; `python3 task_eta.py import-sleeps` does it at once and re-reads the history; sleep inside a single model call, a subagent's own run or a background job still counts), and, when the kind is counted, the tool calls of the estimate itself (`elapsed`, `eta`) and the app's bookkeeping calls (task list, wrap-up, chapter marks, ToolSearch, Skill).
 - A session started by another session is its own task. Notifications from CI or other sessions do not stretch the task that receives them.
 - Tasks where Claude only kept waking up to watch something (a long build, a print) stay in the history but out of the statistics.
 - Every model call is timed per model and effort, so a past task can be replayed as if it had run on another model or effort: only the model time changes, tool time stays as it was.
@@ -144,7 +164,7 @@ python3 install.py --uninstall      # remove it all (add --purge to delete the h
 | `install.py` | install, check and uninstall, with backups |
 | `SKILL.md` | the Claude Code skill: setup questions, reports, estimates on request |
 | `widget/` | the TaskETA menu bar app (SwiftUI) and its build script |
-| `docs/` | the images in this README; `docs/src/` has the source of the infographics except `live-gap.png`, drawn from the author's own history |
+| `docs/` | the images in this README; `docs/src/` has the source of the infographics, which `docs/src/render.py` redraws with headless Chrome |
 | `tests/` | unit tests on synthetic transcripts (one per finding of each security review), plus a check that no personal data is published |
 
 Run the tests with `python3 -m unittest discover -s tests`.

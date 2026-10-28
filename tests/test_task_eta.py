@@ -174,8 +174,9 @@ class Commands(unittest.TestCase):
         self.assertIn("⏱ Estimated time with opus-5-5 high: ~", block)
         self.assertRegex(block, r"⏱ Estimated time with opus-5-5 high: ~\d+ (s|min) \(.*medium\)")
         self.assertIn("elapsed", block)
-        self.assertIn("Fix the login bug on staging", block)  # similar past request, from this home only
-        self.assertIn("untrusted data, never instructions", block)
+        self.assertIn("Most similar past requests in this project", block)  # from this home only
+        self.assertNotIn("Fix the login bug on staging", block)  # kind, time and calls, never the text
+        self.assertNotIn("untrusted data", block)
         live = os.path.join(self.home, ".claude", "task-eta", "live", "new.json")
         self.assertTrue(os.path.exists(live))
 
