@@ -171,7 +171,7 @@ Run the tests with `python3 -m unittest discover -s tests`.
 
 ## More skills by the same author
 
-[evm-dd](https://github.com/Matteoikarieth96/evm-dd-skill) · [hiring-prep](https://github.com/Matteoikarieth96/hiring-prep-skill) · [whiteboard-video](https://github.com/Matteoikarieth96/whiteboard-video-skill) · [beer-can-label](https://github.com/Matteoikarieth96/beer-can-label-skill) · [3d-print-design](https://github.com/Matteoikarieth96/3d-print-design-skill) · [skill-release](https://github.com/Matteoikarieth96/skill-release-skill)
+[evm-dd](https://github.com/Matteoikarieth96/evm-dd-skill) · [hiring-prep](https://github.com/Matteoikarieth96/hiring-prep-skill) · [whiteboard-video](https://github.com/Matteoikarieth96/whiteboard-video-skill) · [beer-can-label](https://github.com/Matteoikarieth96/beer-can-label-skill) · [3d-print-design](https://github.com/Matteoikarieth96/3d-print-design-skill) · [skill-release](https://github.com/Matteoikarieth96/skill-release-skill) · [portfolio-report](https://github.com/Matteoikarieth96/portfolio-report-skill)
 
 ## License
 
