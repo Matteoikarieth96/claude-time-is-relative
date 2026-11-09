@@ -191,6 +191,18 @@ PROTO_CMD = re.compile(r"task_eta\.py['\"]?\s+(?:elapsed|eta)\b")
 # tells Claude not to count them, so the kinds leave them out too (matched on the short tool name).
 BOOKKEEPING_TOOLS = frozenset(("update_plan", "wrap_up", "mark_chapter", "ToolSearch", "Skill", "TodoWrite",
                                "TaskCreate", "TaskUpdate", "TaskList", "TaskGet"))
+# Tools whose result comes back only when the user answers, and what the widget calls the wait: the
+# time spent waiting is the user's, not the task's. Until v5 only questions counted; a plan to approve
+# and a "New session or Do it here" card wait the same way (review 2026-11-09).
+INPUT_TOOLS = {"AskUserQuestion": "question", "ExitPlanMode": "plan",
+               "mcp__ccd_session__start_session": "choice"}
+
+
+def waits_for_user(name, tool_input):
+    """What a tool call asks the user ("question", "plan", "choice"), or None when it does not wait."""
+    if name == "mcp__ccd_session__start_session" and (tool_input or {}).get("initiation") != "offer":
+        return None  # only an offer waits for the user's answer
+    return INPUT_TOOLS.get(name)
 # Headless test runs (claude -p) live in temporary folders: kept for the model speed table,
 # left out of the estimates of the user's tasks.
 BENCH_PATHS = ("/-private-tmp-", "/-tmp-", "bench-runs")
@@ -281,7 +293,7 @@ LAUNCH_ID = re.compile(r"(?:agentId|Task ID|with ID)[ \t]*:?[ \t]*([\w-]{6,80})"
 # later, like a run_in_background one, under this ID. Without it, its report woke Claude as if it
 # were the work of whatever task was current then (review 2026-10-25: 1067 s for 20 s of work).
 MOVED_BG = re.compile(r"moved to the background \(ID: ([\w-]{4,80})\)")
-PARSER_VERSION = 14  # 14: bookkeeping calls counted apart ("book"). Bump when parse_transcript changes what it measures: update() then re-parses everything
+PARSER_VERSION = 15  # 15: plan approvals and offer cards are waits for the user. 14: bookkeeping calls counted apart ("book"). Bump when parse_transcript changes what it measures: update() then re-parses everything
 EFFORTS = {"low": 0, "medium": 1, "high": 2, "xhigh": 3, "max": 4}
 # What a model name may look like before it is stored or shown ("opus-5-5", "claude-sonnet-5-5",
 # "us.anthropic.claude-opus-5-5-v1:0", "anthropic/claude-opus-5.5"): lowercase, at most 48 characters
@@ -1036,7 +1048,7 @@ def parse_transcript(path):
                             launches[tid] = (cur, "agent" if name in WAKE_TOOLS else "watch")
                         if name in TERMINAL_TOOLS:
                             cur["terminal_ids"].add(tid)
-                        if name == "AskUserQuestion":
+                        if waits_for_user(name, inp):
                             cur["asks"][tid] = ts
                     elif btype == "text" and cur["tools"] == 0 and (cur["estimate_min"] is None or cur["calls_declared"] is None):
                         # Only the opening of the reply, before any tool: an example
@@ -2310,6 +2322,40 @@ def tally(tasks):
     return [len(tasks), held, early]
 
 
+def range_width(tasks):
+    """Median width of the printed ranges, high / low (4.0 for "1 to 4 min"), or None. Held alone hides
+    it: in Oct-Nov 2026 the share held stayed near 70% while the width went from 3x to 6x (review 2026-11-09)."""
+    widths = [t["est_range"][1] / t["est_range"][0] for t in tasks if t.get("est_range") and t["est_range"][0] > 0]
+    return pct(widths, 0.5)
+
+
+def point_miss(tasks):
+    """Typical miss of the ~ value of the line: exp of the median |log(real / ~ value)|, so 1.6 when the
+    real time is usually 1.6x above or below it. None without a ~ value."""
+    logs = [abs(math.log(t["dur_s"] / (60 * t["estimate_min"]))) for t in tasks
+            if is_finite(t.get("estimate_min")) and t["estimate_min"] > 0 and t["dur_s"] > 0]
+    return math.exp(pct(logs, 0.5)) if logs else None
+
+
+REPORT_WEEKS = 6  # weeks the report shows for the ranges as printed
+
+
+def by_week(tasks, weeks=REPORT_WEEKS):
+    """[(monday, tasks started that week)] for the last `weeks` weeks that have any, oldest first."""
+    groups = {}
+    for t in tasks:
+        day = datetime.fromtimestamp(t["start_ts"]).date()
+        groups.setdefault(day.toordinal() - day.weekday(), []).append(t)
+    return [(datetime.fromordinal(monday).date(), groups[monday]) for monday in sorted(groups)[-weeks:]]
+
+
+def widest_kinds(corr):
+    """The kinds whose range is already the widest of RANGE_QS: if their times spread more, the
+    range will hold less than RANGE_TARGET and calibrate cannot widen it any further."""
+    kinds = (corr or {}).get("kinds") or {}
+    return [k for k in KINDS if is_finite((kinds.get(k) or {}).get("q")) and kinds[k]["q"] <= RANGE_QS[-1]]
+
+
 def printed_record(work):
     """How the ranges Claude printed held, as printed, on the last RECORD_LINES work tasks whose line
     had one: overall, by the kind declared, and with the declared kind right or wrong. Unlike the
@@ -3322,9 +3368,7 @@ def cmd_hook_prompt():
         quietly(log_suggestion, data, info)
 
 
-# Tools that stop and wait for the user, and what the widget calls the wait.
-INPUT_TOOLS = {"AskUserQuestion": "question", "ExitPlanMode": "plan",
-               "mcp__ccd_session__start_session": "choice"}
+# Notices that wait for the user, and what the widget calls the wait (tools: INPUT_TOOLS).
 INPUT_NOTICES = {"permission_prompt": "permission", "elicitation_dialog": "question"}
 
 
@@ -3338,9 +3382,7 @@ def cmd_hook_input():
     inp = data.get("tool_input") or {}
     detail = ""
     if event == "PreToolUse":
-        kind = INPUT_TOOLS.get(tool)
-        if tool == "mcp__ccd_session__start_session" and inp.get("initiation") != "offer":
-            kind = None  # only an offer waits for the user's answer
+        kind = waits_for_user(tool, inp)
         questions = inp.get("questions") if isinstance(inp.get("questions"), list) else []
         if questions and isinstance(questions[0], dict):
             detail = questions[0].get("question") or ""
@@ -3820,7 +3862,7 @@ def cmd_report():
         k = (corr.get("kinds") or {}).get(kind) or {}
         acc = ""
         if k.get("tested"):
-            acc = "  range held: %d%% (n=%d)" % (round(100 * k["coverage"]), k["tested"])
+            acc = "  range held: %s (n=%d)" % (share_held(k["coverage"]), k["tested"])
             if is_finite(k.get("early")):
                 acc += ", earlier %d%%, later %d%%" % (
                     round(100 * k["early"]), round(100 * max(0.0, 1 - k["coverage"] - k["early"])))
@@ -3842,12 +3884,30 @@ def cmd_report():
     out.append("Model seconds per call, automated runs included (~ = extrapolated, never used):")
     for model in sorted({c.split("|")[0] for c in lat}, key=lambda m: -sum(n for c, (_, n) in lat.items() if c.startswith(m + "|"))):
         out.append("  %-12s %s" % (model, ladder(lat, model)))
-    ranged = [t for t in tasks if t.get("est_range")]
+    ranged = sorted((t for t in work if t.get("est_range")), key=lambda t: t["start_ts"])
     if ranged:
-        inside = sum(1 for t in ranged if t["est_range"][0] <= t["dur_s"] <= t["est_range"][1])
         out.append("")
-        out.append("Likely ranges given: %d, the real time fell inside %d times (%d%%, the target is 50%%)."
-                   % (len(ranged), inside, round(100 * inside / len(ranged))))
+        out.append("Ranges as printed, by week. Held: the real time fell in the range (to the second under 90 s, "
+                   "else to the minute; the target is at least %d in 10). Width: high / low of the range. Miss: "
+                   "how far the real time typically was from the ~ value, above or below." % round(10 * RANGE_TARGET))
+        out.append("  %-12s %5s %5s %8s %6s %6s %6s" % ("week of", "lines", "held", "earlier", "later", "width", "miss"))
+        first_day = datetime.fromtimestamp(ranged[0]["start_ts"])
+        for monday, group in by_week(ranged) + [(None, ranged)]:
+            n, held, early = tally(group)
+            label = ("since %d %s" % (first_day.day, MONTHS[first_day.month - 1]) if monday is None
+                     else "%d %s" % (monday.day, MONTHS[monday.month - 1]))
+            width, miss = range_width(group), point_miss(group)
+            out.append("  %-12s %5d %5s %7d%% %5d%% %6s %6s" % (
+                label, n, share_held(held / n), round(100 * early / n), round(100 * (n - held - early) / n),
+                "%.1fx" % width if width else "-", "%.2fx" % miss if miss else "-"))
+    widest = widest_kinds(corr)
+    if widest:
+        names = [KIND_WORDS[k] for k in widest]
+        out.append("Alarm: %s already %s the widest range the skill has (%d%% to %d%% of past times). If those "
+                   "tasks spread more, the range will hold less than %d in 10 and cannot widen any further."
+                   % (", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0],
+                      "use" if len(names) > 1 else "uses", round(100 * RANGE_QS[-1]), round(100 * (1 - RANGE_QS[-1])),
+                      round(10 * RANGE_TARGET)))
     cal = calibration(tasks)
     out.append("")
     if cal:

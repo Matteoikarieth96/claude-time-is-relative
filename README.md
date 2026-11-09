@@ -128,7 +128,7 @@ Two limits, said plainly. The replayed figures assume Claude picks the right kin
 ## Commands
 
 ```bash
-python3 task_eta.py report          # your task times by kind, model seconds per call, estimate accuracy
+python3 task_eta.py report          # your task times by kind, model seconds per call, estimate accuracy by week
 python3 task_eta.py estimate "write a deck about our Q3 results"
 python3 task_eta.py estimate --model sonnet-5-5 --effort medium "fix the login bug"
 python3 task_eta.py status          # running and recently finished tasks
@@ -141,7 +141,7 @@ python3 install.py --uninstall      # remove it all (add --purge to delete the h
 
 - A task is one prompt you typed plus all the work it caused, until the last action before your next prompt.
 - Background agents and workflows belong to the task that launched them, even when they report back after you have moved on: that task runs until their report is handled, and the task you are on is not charged for it. A task whose agent has not reported back yet stays out of the statistics until it does (or for 12 hours).
-- Not counted: time waiting for your answers, silences over 15 minutes inside a turn with no subagent running, pauses over an hour, time the Mac was asleep between Claude's steps (the hooks note each wake and then read macOS's power log in the background, at most once an hour; `python3 task_eta.py import-sleeps` does it at once and re-reads the history; sleep inside a single model call, a subagent's own run or a background job still counts), and, when the kind is counted, the tool calls of the estimate itself (`elapsed`, `eta`) and the app's bookkeeping calls (task list, wrap-up, chapter marks, ToolSearch, Skill).
+- Not counted: time waiting for your answers (questions, plans to approve, "New session or Do it here" cards), silences over 15 minutes inside a turn with no subagent running, pauses over an hour, time the Mac was asleep between Claude's steps (the hooks note each wake and then read macOS's power log in the background, at most once an hour; `python3 task_eta.py import-sleeps` does it at once and re-reads the history; sleep inside a single model call, a subagent's own run or a background job still counts), and, when the kind is counted, the tool calls of the estimate itself (`elapsed`, `eta`) and the app's bookkeeping calls (task list, wrap-up, chapter marks, ToolSearch, Skill).
 - A session started by another session is its own task. Notifications from CI or other sessions do not stretch the task that receives them.
 - Tasks where Claude only kept waking up to watch something (a long build, a print) stay in the history but out of the statistics.
 - Every model call is timed per model and effort, so a past task can be replayed as if it had run on another model or effort: only the model time changes, tool time stays as it was.
