@@ -2309,6 +2309,118 @@ def pick_range_q(tested, inside):
     return next((i for i, c in enumerate(inside) if c / tested >= RANGE_TARGET), len(RANGE_QS) - 1)
 
 
+# v6 (review 2026-11-16): each line (its ~ value and both ends of its range) is scaled by how the user's
+# earlier lines of the same DECLARED kind and prompt length turned out. The estimates by kind are
+# medians of what the tasks turned out to be, but a line is picked from a plan: about 3 lines in 10
+# name another kind than the real one, mostly a bigger one, so the lines of a declared kind run
+# off in a steady direction (the author's declared "medium" and "long" lines finished around 0.7x
+# their ~ value, short prompts lower than long ones). Time-ordered replay on the author's 816 lines:
+# the typical miss of the ~ value went from 1.64x to 1.60x, and on the last week from 1.89x to 1.72x
+# with the range held 71% against 64% at the same width. A factor by the REAL kind (tried and dropped
+# in October) only carried old drift in; a recent-window median, the category, the project and the
+# position in the session added nothing. The factor is learned against the line as it would have
+# been WITHOUT scaling (replayed in calibrate), never against the scaled line, so it cannot feed on
+# itself, and it is used only while, on the user's own lines, it brought the ~ value closer and
+# the range held at least as often. Off with TASK_ETA_NO_SCALING=1 in the hooks' environment.
+DECLARED_FACTOR = os.environ.get("TASK_ETA_NO_SCALING") != "1"
+ADJ_LABELS = KINDS + ["agents_brief"]  # one per line of the block; "agents" is the "with subagents" line
+ADJ_WINDOW = 150         # the last lines of a label the factor is learned from
+ADJ_TASKS = 600          # the last tasks calibrate replays to find those lines (the accuracy keeps its own 300)
+ADJ_SHRINK = 10          # a median of n lines counts n / (n + ADJ_SHRINK): few lines barely move it
+ADJ_CLAMP = (0.5, 2.0)   # the factor never leaves this range
+ADJ_MIN_CHECK = 30       # lines tested out of sample before the factor may be used
+ADJ_SPANS = 20           # the last stretches of time the factor was on that the calibration remembers
+PROMPT_BANDS = (25, 100)  # prompt length in characters: under 25, 25 to 99, 100 or more
+
+
+def prompt_band(text):
+    """0, 1 or 2: the length band of a prompt as the index keeps it (see PROMPT_BANDS)."""
+    n = len(text or "")
+    return sum(n >= edge for edge in PROMPT_BANDS)
+
+
+def shrunk_median(values):
+    """The median pulled toward 0 while there are few values (see ADJ_SHRINK); 0.0 with none."""
+    return pct(values, 0.5) * len(values) / (len(values) + ADJ_SHRINK) if values else 0.0
+
+
+def declared_factor(rows, band):
+    """What a line is multiplied by, from the earlier lines of the same label: rows are
+    (log(real time / unscaled ~ value), prompt band), oldest first. The label's own shrunk median
+    over its last ADJ_WINDOW lines, plus the shrunk median of what is left on the lines of this
+    prompt band; 1.0 with no lines."""
+    base = shrunk_median([x for x, _ in rows[-ADJ_WINDOW:]])
+    extra = shrunk_median([x - base for x, b in rows if b == band][-ADJ_WINDOW:])
+    return min(ADJ_CLAMP[1], max(ADJ_CLAMP[0], math.exp(base + extra)))
+
+
+def declared_line(pred, task, scale=None):
+    """(label, seconds) of the line Claude copied for a past task, as the hook would have offered it
+    then with no scaling; None when the task had no line with a kind. A line "with subagents" is the
+    brief one when the ~ value Claude wrote is closer to it (scale(label) = the factor the line
+    carried when it was printed, if any)."""
+    kind = declared_kind(task)
+    said = task.get("estimate_min")
+    if not kind or not is_finite(said) or said <= 0:
+        return None
+    ests = kind_estimates(pred, None, task["model"], task["effort"])
+    if kind not in ests:
+        return None
+    value = ests[kind][0]
+    if kind == "agents":
+        brief = brief_estimate(pred, None, task["model"], task["effort"])
+        if brief:
+            f_long, f_brief = (scale("agents"), scale("agents_brief")) if scale else (1.0, 1.0)
+            if abs(math.log(60 * said / (brief[0] * f_brief))) < abs(math.log(60 * said / (value * f_long))):
+                return "agents_brief", brief[0]
+    return kind, value
+
+
+def valid_adjust(adj):
+    """The "adjust" part of the calibration as the block may use it, or None."""
+    if not isinstance(adj, dict) or not isinstance(adj.get("labels"), dict):
+        return None
+    whole = lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0  # noqa: E731
+    labels = {}
+    for label, v in adj["labels"].items():
+        f = v.get("factor") if isinstance(v, dict) else None
+        if (label in ADJ_LABELS and isinstance(f, list) and len(f) == len(PROMPT_BANDS) + 1
+                and all(is_finite(x) and ADJ_CLAMP[0] <= x <= ADJ_CLAMP[1] for x in f)):
+            bands = v.get("bands")
+            labels[label] = {"factor": f, "n": v["n"] if whole(v.get("n")) else 0,
+                             "bands": bands if isinstance(bands, list) and len(bands) == len(f)
+                             and all(whole(x) for x in bands) else [0] * len(f)}
+    check = adj.get("check")
+    if not (isinstance(check, dict) and whole(check.get("n")) and whole(check.get("ranged"))
+            and all(isinstance(check.get(f), list) and len(check[f]) == 2 for f in ("miss", "held"))
+            and all(is_finite(x) and x >= 1 for x in check["miss"])
+            and all(whole(x) and x <= check["ranged"] for x in check["held"])):
+        check = None
+    spans = adj.get("spans")
+    if not (isinstance(spans, list) and all(
+            isinstance(s, list) and len(s) == 2 and is_seconds(s[0]) and (s[1] is None or (is_seconds(s[1]) and s[1] >= s[0]))
+            for s in spans)):
+        spans = []
+    return {"labels": labels, "check": check, "on": adj.get("on") is True and check is not None,
+            "spans": spans[-ADJ_SPANS:]}
+
+
+def factor_helps(n, miss, held):
+    """Whether the factor may be used, from its out-of-sample check: n lines tested, miss = the typical
+    miss of the ~ value [without, with], held = the lines whose range held [without, with]."""
+    return n >= ADJ_MIN_CHECK and miss[1] <= miss[0] and held[1] >= held[0]
+
+
+def line_factor(corr, label, band):
+    """What the hook multiplies a line by (see declared_factor): 1.0 while the calibration has no
+    factor for it, or the factor is off (see calibrate)."""
+    adj = (corr or {}).get("adjust") or {}
+    if not DECLARED_FACTOR or not adj.get("on") or band is None:
+        return 1.0
+    f = (adj["labels"].get(label) or {}).get("factor")
+    return f[band] if f and 0 <= band < len(f) else 1.0
+
+
 RECORD_LINES = 100  # the record of the lines as printed covers the last RECORD_LINES that had a range
 RECORD_MIN = 10     # lines with a range needed before the block shows that record
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -2376,28 +2488,70 @@ def calibrate(idx, last_n=300):
     tasks out of sample: each one is predicted only from tasks (and model speeds) that had ended
     before it began, as the hook would have done then, for the kind it turned out to be (so the
     accuracy holds if the kind is right; printed_record keeps the lines as printed).
-    The estimate itself is the kind's up-to-date median (no correction factor: re-centring on old
-    ratios only carried old drift in); lo/hi are the q and 1-q quantiles of real/predicted divided by
+    The estimate itself is the kind's up-to-date median (no correction factor by the real kind:
+    re-centring on old ratios only carried old drift in; the lines are scaled by the DECLARED kind
+    instead, see DECLARED_FACTOR and "adjust" below); lo/hi are the q and 1-q quantiles of real/predicted divided by
     their median, so the range keeps the measured spread around the median, q from pick_range_q.
     The accuracy is out of sample for the width too: each task is scored with the width that the
     tasks tested before it picked, once RANGE_MIN_TESTED of them had (picking it on the same tasks
     it is then scored on printed 70% for a range that held 57%, review 2026-10-28). Tasks hit by
-    API errors or a compaction count as well: the printed lines meet them too."""
+    API errors or a compaction count as well: the printed lines meet them too.
+    "adjust" holds the factor of each line by prompt band (see declared_factor), learned from the
+    lines Claude copied, each replayed here without scaling, and a check on those same lines, each
+    scaled only with the lines that had ended before it: the typical miss of the ~ value and how
+    often the range held, without and with the factor. The factor is "on" only when the check has
+    ADJ_MIN_CHECK lines, the miss with it is not worse and the range held at least as often."""
     tasks = finished_tasks(idx)
     resolve_categories(idx)
     work = sorted(estimate_pool(tasks), key=lambda t: t["start_ts"])
-    targets = [t for t in work if t.get("model") and t.get("effort")][-last_n:]
-    if len(targets) < 20:
+    targets = [t for t in work if t.get("model") and t.get("effort")]
+    if len(targets[-last_n:]) < 20:
         return None
+    # The lines the factor learns from reach further back than the tasks the accuracy is measured on.
+    targets = targets[-max(last_n, ADJ_TASKS if DECLARED_FACTOR else 0):]
+    first = len(targets) - last_n
     by_kind, hits = {}, {}
+    said, check = {}, {"n": 0, "plain": [], "scaled": [], "ranged": 0, "held": [0, 0]}
+    # Lines printed while the factor was on carry it: needed to tell the two lines with subagents apart.
+    spans = [list(s) for s in ((load_predictor() or {}).get("adjust") or {}).get("spans") or []]
     pred = None
     for i, task in enumerate(targets):
         # Rebuilt every CAL_CHUNK tasks, and at every task while the history before it is short.
-        if pred is None or i % CAL_CHUNK == 0 or pred.n < 4 * CAL_WARMUP:
+        if pred is None or (i - max(first, 0)) % CAL_CHUNK == 0 or pred.n < 4 * CAL_WARMUP:
             cutoff = task["start_ts"]
             lat_c = latency_table([t for t in tasks if (t.get("end_ts") or float("inf")) <= cutoff])
             pred = Predictor([t for t in work if (t.get("end_ts") or float("inf")) <= cutoff], lat_c)
         if pred.n < 5 or call_latency(pred.lat, task["model"], task["effort"])[0] is None:
+            continue
+        if DECLARED_FACTOR and task["dur_s"] > 0:
+            band = prompt_band(task.get("prompt"))
+            earlier = lambda label: [(x, b) for e, x, b in said.get(label, []) if e <= task["start_ts"]]  # noqa: E731
+            carried = any(a <= task["start_ts"] and (b is None or task["start_ts"] < b) for a, b in spans)
+            line = declared_line(pred, task, (lambda label: declared_factor(earlier(label), band)) if carried else None)
+            if line:
+                label, value = line
+                before = earlier(label)
+                if len(before) >= CAL_WARMUP and i >= first:
+                    m = declared_factor(before, band)
+                    check["n"] += 1
+                    check["plain"].append(abs(math.log(task["dur_s"] / value)))
+                    check["scaled"].append(abs(math.log(task["dur_s"] / (value * m))))
+                    kind_d = "agents" if label == "agents_brief" else label
+                    prev = [r for e, r in by_kind.get(kind_d, []) if e <= task["start_ts"]]
+                    if len(prev) >= CAL_WARMUP:
+                        # The range the line had then: the kind's spread, at the width picked so far.
+                        h = hits.get(kind_d)
+                        q = RANGE_QS[pick_range_q(h["tested"], h["inside"]) if h and kind_d in WIDEN_KINDS else 0]
+                        f = pct(prev, 0.5)
+                        lo, hi = value * pct(prev, q) / f, value * pct(prev, 1 - q) / f
+                        real = shown_total(task["dur_s"])
+                        check["ranged"] += 1
+                        for j, k in enumerate((1.0, m)):
+                            lo_s, hi_s = shown_bounds(lo * k, hi * k)
+                            check["held"][j] += lo_s <= real <= hi_s
+                said.setdefault(label, []).append(
+                    (task.get("end_ts") or task["start_ts"], math.log(task["dur_s"] / value), band))
+        if i < first:
             continue
         kind = task_kind(task)
         # A task with subagents is scored on the line the block shows (see BRIEF_LINE).
@@ -2454,6 +2608,23 @@ def calibrate(idx, last_n=300):
         return None
     tested = sum(h["tested"] for h in hits.values())
     mid = pct(all_rs, 0.5)
+    adjust = None
+    if DECLARED_FACTOR and said:
+        labels = {}
+        for label, rows in said.items():
+            pairs = [(x, b) for _, x, b in rows]
+            bands = range(len(PROMPT_BANDS) + 1)
+            labels[label] = {"n": len(pairs), "bands": [sum(1 for _, b in pairs if b == i) for i in bands],
+                             "factor": [round(declared_factor(pairs, i), 4) for i in bands]}
+        miss = [math.exp(pct(check[f], 0.5)) if check[f] else 1.0 for f in ("plain", "scaled")]
+        on = factor_helps(check["n"], miss, check["held"])
+        if on and not (spans and spans[-1][1] is None):
+            spans.append([time.time(), None])
+        elif not on and spans and spans[-1][1] is None:
+            spans[-1][1] = time.time()
+        adjust = {"labels": labels, "on": on, "spans": spans[-ADJ_SPANS:],
+                  "check": {"n": check["n"], "miss": [round(x, 4) for x in miss], "ranged": check["ranged"],
+                            "held": check["held"]}}
     data = {
         "kinds": kinds, "n": len(all_rs), "work_tasks": len(work),
         "kind_hits": [sum(1 for t in declared if declared_kind(t) == task_kind(t)), len(declared)],
@@ -2464,7 +2635,7 @@ def calibrate(idx, last_n=300):
         # For older readers (the previous task_eta.py, on a rollback): no correction factor.
         "factor": 1.0, "q25": pct(all_rs, 0.25) / mid, "q75": pct(all_rs, 0.75) / mid,
         "within_2x": sum(h["within"] for h in hits.values()) / tested if tested else 0.0, "groups": {},
-        "printed": printed_record(work),
+        "printed": printed_record(work), "adjust": adjust,
     }
     write_json(PREDICTOR, data, indent=1)
     return data
@@ -2510,6 +2681,7 @@ def load_predictor():
             and all(is_tally(rec.get(f)) for f in ("all", "right", "wrong"))
             and all(kind in KINDS and is_tally(v) for kind, v in rec["kinds"].items())):
         data["printed"] = None
+    data["adjust"] = valid_adjust(data.get("adjust"))
     return data
 
 
@@ -2656,11 +2828,13 @@ def projects_here():
     return {project_for_cwd(p) for p in here}
 
 
-def kind_estimates(pred, corr, model, effort):
+def kind_estimates(pred, corr, model, effort, band=None):
     """{kind: (estimate, low, high)} in seconds for this model and effort: each kind's median,
     re-timed, with the kind's measured spread as the range. Kinds stay in order (quick < medium <
-    long < agents); a kind with too few tasks gets the one before it x3, with no range."""
-    out, prev = {}, None
+    long < agents); a kind with too few tasks gets the one before it x3, with no range. With a
+    prompt band (see prompt_band) each line is scaled by its factor (see line_factor), never below
+    the line before it; band None = as measured."""
+    out, prev, last = {}, None, 0.0
     for kind in KINDS:
         k = ((corr or {}).get("kinds") or {}).get(kind)
         raw = pred.category_median(None, model, effort, kind)
@@ -2672,20 +2846,25 @@ def kind_estimates(pred, corr, model, effort):
         if not raw and prev is not None:
             raw, k = prev * 3, None
         if raw:
-            out[kind] = (raw, raw * k["lo"], raw * k["hi"]) if k else (raw, None, None)
             prev = raw
+            raw *= max(line_factor(corr, kind, band), last / raw)
+            out[kind] = (raw, raw * k["lo"], raw * k["hi"]) if k else (raw, None, None)
+            last = raw
     return out
 
 
-def brief_estimate(pred, corr, model, effort):
+def brief_estimate(pred, corr, model, effort, band=None, top=None):
     """(estimate, low, high) for "with brief subagents", or None while either half of the tasks
     with subagents (brief, not brief) has under 5 tasks, or the line is off (BRIEF_LINE). The range is
-    the kind's measured spread."""
+    the kind's measured spread. With a prompt band the line is scaled as in kind_estimates, and
+    with `top` (the "with subagents" line as printed) it never goes above it."""
     if not BRIEF_LINE:
         return None
     raw = pred.category_median(None, model, effort, "agents", True)
     if not raw or not pred.category_median(None, model, effort, "agents", False):
         return None
+    m = line_factor(corr, "agents_brief", band)
+    raw *= min(m, top / raw) if top else m
     k = ((corr or {}).get("kinds") or {}).get("agents")
     return (raw, raw * k["lo"], raw * k["hi"]) if k else (raw, None, None)
 
@@ -2729,7 +2908,8 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
                 "long or with subagents." % (model, effort, model, effort))
     corr = load_predictor()
     pred = Predictor(work, lat)
-    ests = kind_estimates(pred, corr, model, effort)
+    band = prompt_band(text)
+    ests = kind_estimates(pred, corr, model, effort, band)
     cat = guess_category({"prompt": text})
     projects = {project} if isinstance(project, str) else set(project or ())
     sims = pred.similar(text, k=SHOWN_SIMILAR, where=lambda t: project_of(t.get("file")) in projects) if projects else []
@@ -2746,7 +2926,7 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
         "the range held the real time on your last tasks of that kind if the kind is right (out of sample, "
         "to the second under 90 s, else to the minute; meant to hold at least %d times in 10):" % round(10 * RANGE_TARGET),
     ]
-    brief = brief_estimate(pred, corr, model, effort)
+    brief = brief_estimate(pred, corr, model, effort, band, top=(ests.get("agents") or [None])[0])
     for kind in KINDS + ["agents_brief"]:
         if kind not in ests and not (kind == "agents_brief" and brief):
             continue
@@ -2766,6 +2946,15 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
         lines.append("  %s (%s): %s%s%s" % (KIND_WORDS[kind], KIND_HELP[kind], fmt_estimate(value), rng, acc))
     if plain:
         lines.append("  no tools: no line (median %s)" % fmt(pct(plain, 0.5)))
+    # What each line was really multiplied by (the order of the lines can lift a factor, see kind_estimates).
+    plain_ests = kind_estimates(pred, corr, model, effort)
+    scale = {k: ests[k][0] / plain_ests[k][0] for k in KINDS if k in ests and k in plain_ests}
+    plain_brief = brief_estimate(pred, corr, model, effort)
+    if brief and plain_brief:
+        scale["agents_brief"] = brief[0] / plain_brief[0]
+    note = scaling_line(corr, scale)
+    if note:
+        lines.append(note)
     record = record_line((corr or {}).get("printed"))
     if record:
         lines.append(record)
@@ -2802,7 +2991,9 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
                     kinds={k: [round(v), round(lo) if lo is not None else None, round(hi) if hi is not None else None]
                            for k, (v, lo, hi) in ests.items()},
                     # "with brief subagents": for the suggestions log only (the widget knows the four kinds).
-                    brief=[round(x) if x is not None else None for x in brief] if brief else None)
+                    brief=[round(x) if x is not None else None for x in brief] if brief else None,
+                    # What each line was multiplied by (1 = as measured) and the prompt's length band.
+                    adjust={k: round(m, 3) for k, m in scale.items()}, band=band)
     if calls_line_on():
         lines.append("If you will use tools, open the reply with the line of the kind you plan, copied as is, before "
                      "any tool call, then an empty line, then this hidden line, as is but with N = the tool calls you "
@@ -2817,11 +3008,11 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
     if not current:
         lines.append("(no reply in this session yet: use the lines of the model you are)")
     for m, e in ([(model, effort)] if current else candidates):
-        other = ests if (m, e) == (model, effort) else kind_estimates(pred, corr, m, e)
+        other = ests if (m, e) == (model, effort) else kind_estimates(pred, corr, m, e, band)
         for kind in KINDS:
             if kind in other:
                 lines.append(kind_line(m, e, kind, other[kind]))
-        brief_est = brief_estimate(pred, corr, m, e)
+        brief_est = brief_estimate(pred, corr, m, e, band, top=(other.get("agents") or [None])[0])
         if brief_est and "agents" in other:
             lines.append(kind_line(m, e, "agents_brief", brief_est))
     if sims and sims[0][0] >= STRONG_SIM:
@@ -2834,6 +3025,23 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
                  "the line it prints, unchanged. In a long task, an intermediate update may include the line "
                  "printed by `%s eta`." % (me, me))
     return "\n".join(lines)
+
+
+def scaling_line(corr, scale):
+    """The block's line on the scaling of the lines (see DECLARED_FACTOR), or None when no line is scaled."""
+    shown = ["%s x%.2f" % (KIND_WORDS[k], m) for k, m in scale.items() if round(m, 2) != 1]
+    check = ((corr or {}).get("adjust") or {}).get("check")
+    if not shown or not check:
+        return None
+    line = ("- The values above and the lines below are already scaled by how your earlier lines of the same declared "
+            "kind and prompt length turned out (%s): on %d of your last lines, each scaled only with the lines before "
+            "it, the ~ value was typically off %.2fx with the scaling and %.2fx without"
+            % (", ".join(shown), check["n"], check["miss"][1], check["miss"][0]))
+    if check["ranged"]:
+        line += ", and on the %d of them with a range it held %d%% against %d%%" % (
+            check["ranged"], round(100 * check["held"][1] / check["ranged"]),
+            round(100 * check["held"][0] / check["ranged"]))
+    return line + ". The shares held by kind above were measured without the scaling. Copy the lines as they are."
 
 
 def share_held(coverage):
@@ -3313,7 +3521,9 @@ def log_suggestion(data, info):
     with os.fdopen(fd, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"ts": round(time.time(), 3), "session": data.get("session_id"),
                              "model": info.get("model"), "effort": info.get("effort"),
-                             "kinds": info["kinds"], "brief": info.get("brief")}) + "\n")
+                             "kinds": info["kinds"], "brief": info.get("brief"),
+                             # The factor inside each offered value (value / factor = as measured), and the prompt band.
+                             "adj": info.get("adjust"), "band": info.get("band")}) + "\n")
 
 
 def cmd_hook_prompt():
@@ -3900,6 +4110,29 @@ def cmd_report():
             out.append("  %-12s %5d %5s %7d%% %5d%% %6s %6s" % (
                 label, n, share_held(held / n), round(100 * early / n), round(100 * (n - held - early) / n),
                 "%.1fx" % width if width else "-", "%.2fx" % miss if miss else "-"))
+    adj = corr.get("adjust")
+    if adj and adj["labels"]:
+        check = adj["check"]
+        out.append("")
+        out.append("Scaling of the lines by declared kind and prompt length (the factor each line is multiplied by, "
+                   "learned from your last lines of that kind): %s." % (
+                       "on" if adj["on"] else "off, on your lines it did not bring the ~ value closer or the range held less often" if check
+                       and check["n"] >= ADJ_MIN_CHECK else "off until %d lines are tested" % ADJ_MIN_CHECK))
+        out.append("  %-22s %5s %10s %10s %10s" % ("line", "lines", "under %d" % PROMPT_BANDS[0],
+                                                 "%d to %d" % (PROMPT_BANDS[0], PROMPT_BANDS[1] - 1),
+                                                 "%d+ chars" % PROMPT_BANDS[1]))
+        for label in ADJ_LABELS:
+            if label in adj["labels"]:
+                v = adj["labels"][label]
+                out.append("  %-22s %5d %10s %10s %10s" % ((KIND_WORDS[label], v["n"]) + tuple("x%.2f" % f for f in v["factor"])))
+        if check and check["n"]:
+            line = ("  Out of sample on %d lines: the ~ value was typically off %.2fx with the scaling, %.2fx without"
+                    % (check["n"], check["miss"][1], check["miss"][0]))
+            if check["ranged"]:
+                line += "; the range held %s against %s (%d lines with a range)" % (
+                    share_held(check["held"][1] / check["ranged"]), share_held(check["held"][0] / check["ranged"]),
+                    check["ranged"])
+            out.append(line + ".")
     widest = widest_kinds(corr)
     if widest:
         names = [KIND_WORDS[k] for k in widest]
