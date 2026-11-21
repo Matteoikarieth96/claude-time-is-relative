@@ -67,6 +67,16 @@ Remove everything with `python3 install.py --uninstall`; add `--purge` to delete
 - **During a long task**: Claude may add `⏱ Elapsed: 12 min · about 8 min left (likely 5 to 15 min)`, re-estimated from the work done so far.
 - Times are in seconds under 90 s, otherwise in minutes (never hours).
 
+### A shorter block (optional)
+
+The block the hook adds to each prompt is about 4,000 characters: besides the ready lines it says how often each range held, how the lines are scaled, the record of the lines as printed and your most similar past requests. Claude needs none of that to copy a line; it is there so the estimate can be checked. To spend fewer tokens per prompt, set `TASK_ETA_BLOCK=compact` in the hooks' environment, for example in `~/.claude/settings.json`:
+
+```json
+{ "env": { "TASK_ETA_BLOCK": "compact" } }
+```
+
+The block then has one line saying what it is, one line with the kinds and the estimate of each, the same ready ⏱ lines, character for character, and the closing `elapsed` command: under 900 characters with a command of ordinary length (the two paths in it are the part that varies), about a quarter of the full block. What is left out: the accuracy figures, the rule that a file of 150+ lines counts as 3 calls, the tie-break advice when your kind misses lean one way, and the optional "A similar task took…" sentence. It works best with the short rule in `~/.claude/CLAUDE.md` (question 3 of the installer), which repeats the format. Estimates, the widget, `report` and `python3 task_eta.py estimate` (always the full block) do not change. Remove the variable, or set any other value, to get the full block back; sessions started after the change pick it up.
+
 ### The widget
 
 TaskETA lives in the menu bar: a tick and the number of tasks finished in the last 30 minutes. Click it for every running task as a bar, with the time so far, the estimate and the likely range of the kind Claude declared. Tasks waiting for your answer come first. An optional panel can sit on the desktop, under your windows (off until you turn it on in the menu). Before sharing your screen, turn on **Hide prompts and titles** in the menu: rows then show only the folder.

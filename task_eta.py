@@ -104,6 +104,8 @@ KIND_HELP = {"quick": "1-3 tool calls, e.g. write one file, or write it and run 
              "long": "16+ tool calls, e.g. a multi-file project worked until its tests pass",
              "agents": "any Agent, Task or Workflow call; at least one subagent researches or builds for 10+ minutes",
              "agents_brief": "Agent, Task or Workflow calls whose subagents all finish in under ~10 minutes"}
+# The same, as short as the compact block needs them (see BLOCK_ENV).
+KIND_SHORT = {"quick": " 1-3", "medium": " 4-15", "long": " 16+", "agents": "", "agents_brief": ", each under ~10 min"}
 # A task with subagents takes about three times as long when they research or build for a while
 # as when each one does a short job (the author's tasks: median 51 min with subagents of 20+ min,
 # 11 min with subagents of 3 to 8 min). Claude knows which from its plan, so "with subagents" gets
@@ -182,6 +184,12 @@ HIDDEN_CALLS_RE = re.compile(r"<!--[ \t]*task-eta[ \t]*(?::[ \t]*)?(?:~[ \t]?)?(
 # The block asks for the hidden count only when the experiment is on: TASK_ETA_CALLS_LINE=1 in the
 # hooks' environment (config.json stays install.py's, which accepts only its own "since" there).
 CALLS_LINE_ENV = "TASK_ETA_CALLS_LINE"
+# The form of the block the hook adds to each prompt, from the hooks' environment like the switch above:
+# TASK_ETA_BLOCK=compact keeps what Claude acts on (what the block is, the kinds with their estimates, the
+# ready lines, the closing command) and leaves out what is there for transparency (how often each range
+# held, the scaling, the record of the printed lines, the similar past requests). The ready lines are the
+# same in both forms. Unset or any other value: the full block. `estimate` always prints the full one.
+BLOCK_ENV = "TASK_ETA_BLOCK"
 CALLS_MAX = 2000
 AGENTS_MAX = 100
 LEGACY_KINDS = {"veloce": "quick", "medio": "medium", "lungo": "long", "agenti": "agents", "testo": "text"}
@@ -2881,11 +2889,12 @@ def kind_name(kind):
 
 
 def estimate_block(text, idx, current=None, source="this session's last reply", effort_hint=None,
-                   info=None, project=None):
+                   info=None, project=None, compact=False):
     """The [task-eta] block for a prompt: one estimate line per kind of work (see KINDS), for
     Claude to copy the one it plans. Past requests are quoted only from `project` (a project
     folder name, see project_of), and none when it is unknown. If info is a dict, it also gets
-    the numbers of the kind the similar past requests point to, for the live file."""
+    the numbers of the kind the similar past requests point to, for the live file. With compact,
+    the short form (see BLOCK_ENV): the same ready lines and numbers for `info`, fewer words."""
     tasks = finished_tasks(idx)
     hide = os.environ.get("TASK_ETA_EXCLUDE")
     if hide:
@@ -2994,6 +3003,9 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
                     brief=[round(x) if x is not None else None for x in brief] if brief else None,
                     # What each line was multiplied by (1 = as measured) and the prompt's length band.
                     adjust={k: round(m, 3) for k, m in scale.items()}, band=band)
+    if compact:
+        # Everything above is for the reader: the compact block starts again here, with what Claude acts on.
+        lines = compact_head(model, effort, ests, brief, bool(current))
     if calls_line_on():
         lines.append("If you will use tools, open the reply with the line of the kind you plan, copied as is, before "
                      "any tool call, then an empty line, then this hidden line, as is but with N = the tool calls you "
@@ -3002,6 +3014,8 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
                      "[//]: # (task-eta: ~N call, A agents, L long) (a Markdown link definition: the app does not "
                      "show it; it measures how well work is planned). Write only these: no reasons, no mention of the "
                      "hook. With no tools, no line:")
+    elif compact:
+        lines.append("With tools, open the reply with your kind's line as is; no tools, no line:")
     else:
         lines.append("If you will use tools, open the reply with the line of the kind you plan, copied as is, before "
                      "any tool call: no reasons, no mention of the hook. With no tools, no line:")
@@ -3015,16 +3029,38 @@ def estimate_block(text, idx, current=None, source="this session's last reply", 
         brief_est = brief_estimate(pred, corr, m, e, band, top=(other.get("agents") or [None])[0])
         if brief_est and "agents" in other:
             lines.append(kind_line(m, e, "agents_brief", brief_est))
-    if sims and sims[0][0] >= STRONG_SIM:
+    if sims and sims[0][0] >= STRONG_SIM and not compact:
         best = sims[0][1]
         lines.append("A past request matches closely (it was %s): if you plan that same kind, you may add this "
                      "sentence right after the line, as is:" % kind_name(task_kind(best)))
         lines.append("A similar task took %s." % fmt_words(retime(best, lat, model, effort) or best["dur_s"]))
-    me = "%s %s" % (shlex.quote(sys.executable), shlex.quote(os.path.abspath(__file__)))
-    lines.append("As the last tool call of a task that opened with a line, run `%s elapsed` and end the reply with "
-                 "the line it prints, unchanged. In a long task, an intermediate update may include the line "
-                 "printed by `%s eta`." % (me, me))
+    me = protocol_command()
+    if compact:
+        lines.append("Last tool call: `%s elapsed`, then end the reply with the line it prints. Mid-task update: "
+                     "same command with `eta`." % me)
+    else:
+        lines.append("As the last tool call of a task that opened with a line, run `%s elapsed` and end the reply with "
+                     "the line it prints, unchanged. In a long task, an intermediate update may include the line "
+                     "printed by `%s eta`." % (me, me))
     return "\n".join(lines)
+
+
+def compact_head(model, effort, ests, brief, known=True):
+    """The first two lines of the compact block (see BLOCK_ENV): what the block is, and the kinds with the
+    estimate of each, in the order of the ready lines. The model is named only when the session's own is
+    not known yet (the ready lines then cover several)."""
+    values = [(k, ests[k][0]) for k in KINDS if k in ests]
+    if brief and "agents" in ests:
+        values.append(("agents_brief", brief[0]))
+    kinds = ", ".join("%s%s (%s)" % (KIND_WORDS[k], KIND_SHORT[k], fmt_estimate(v)) for k, v in values)
+    return ["[task-eta] Time estimates from your past tasks.",
+            "Kinds, by tool calls planned%s: %s." % ("" if known else " (times for %s %s)" % (model, effort), kinds)]
+
+
+def block_form():
+    """ "compact" when the hooks' environment asks for the short block (TASK_ETA_BLOCK=compact, see
+    BLOCK_ENV), else "full": unset, empty or any other value keeps the block as it always was."""
+    return "compact" if (os.environ.get(BLOCK_ENV) or "").strip().lower() == "compact" else "full"
 
 
 def scaling_line(corr, scale):
@@ -3568,7 +3604,7 @@ def cmd_hook_prompt():
     query = masked
     project = project_of(data.get("transcript_path")) or project_for_cwd(data.get("cwd"))
     block = estimate_block(query, load_index(), combo, source=source, effort_hint=effort, info=info,
-                           project=project)
+                           project=project, compact=block_form() == "compact")
     if block:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit", "additionalContext": block}}))
