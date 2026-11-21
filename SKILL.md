@@ -1,11 +1,11 @@
 ---
 name: task-eta
-description: Time estimates for Claude Code tasks, learned from the user's own past sessions on this machine ("Claude Time is relative (to you)"). Use when the user asks how long a task will take or took, wants a report of their task times, asks how accurate past estimates were, wants the timing history rebuilt, or wants to install, set up, check or remove task-eta or its TaskETA menu bar widget. The ⏱ line at the start of each task comes from the hooks, not from this skill.
+description: Time estimates for Claude Code tasks, learned from the user's own past sessions on this machine. Use when the user asks how long a task will take or took, wants a report of task times or of how accurate past estimates were, or wants to install, check or remove task-eta or its TaskETA menu bar widget. The ⏱ line at the start of each task comes from the hooks, not from this skill.
 ---
 
 # task-eta
 
-Measures how long Claude Code tasks take on this machine and uses that history to estimate new ones. Everything stays on this machine: `task_eta.py` and `install.py` use the Python standard library only and have no network code.
+"Claude Time is relative (to you)": measures how long Claude Code tasks take on this machine and uses that history to estimate new ones. Everything stays on this machine: `task_eta.py` and `install.py` use the Python standard library only and have no network code.
 
 `SKILL_DIR` below is the folder of this file. Paths may contain spaces: always quote them.
 

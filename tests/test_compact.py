@@ -18,7 +18,7 @@ task_eta = importlib.import_module("task_eta")
 SPREAD = (0.4, 1.0, 2.5, 0.7, 1.6, 0.25, 1.2, 3.0, 0.9, 0.5)
 # A command of ordinary length (python3 and a clone in the home folder), so the size does not depend on
 # where the tests run. The whole block grows by one character for each character of this command.
-COMMAND = "/usr/bin/python3 /Users/someone/claude-time-is-relative/task_eta.py"
+COMMAND = "/usr/bin/python3 /Users/me/claude-time-is-relative/task_eta.py"
 SIZE_TARGET = 900  # characters of a compact block with all five lines and a command like the one above
 WORDS_TARGET = 420  # the same, without the ready lines and the command: what the compact form itself writes
 
